@@ -16,13 +16,18 @@ class ProjectGenerator {
 
     print("\nCloning template project...\n");
 
-    await Process.run("git", [
+    var gitResult = await Process.run("git", [
       "clone",
       "-b",
-      "project_template",
+      "features/project_template",
       "https://github.com/Hardik-Moweb/Flutter-Code-Structure",
       projectName,
     ]);
+
+    if (gitResult.exitCode != 0) {
+      print("Failed to clone template:\n${gitResult.stderr}");
+      exit(1);
+    }
 
     Directory projectDir = Directory(projectName);
 
