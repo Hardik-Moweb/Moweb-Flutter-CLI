@@ -260,16 +260,18 @@ class ProjectGenerator {
         ]);
 
         if (androidConfig.exitCode == 0) {
-          String output = androidConfig.stdout.toString();
-          if (output.contains("JSON for your app:")) {
+          String output = androidConfig.stdout.toString().trim();
+          // Regex to extract the first { ... } block
+          Match? match = RegExp(r'({[\s\S]*})').firstMatch(output);
+
+          if (match != null) {
+            String configContent = match.group(0)!;
             String androidPath =
                 "$projectName/android/app/src/prod/google-services.json";
             await Directory(
               "$projectName/android/app/src/prod",
             ).create(recursive: true);
-            await File(
-              androidPath,
-            ).writeAsString(output.split("JSON for your app:").last.trim());
+            await File(androidPath).writeAsString(configContent);
             print("Android configuration placed at $androidPath");
           } else {
             print(
@@ -296,14 +298,16 @@ class ProjectGenerator {
         ]);
 
         if (iosConfig.exitCode == 0) {
-          String output = iosConfig.stdout.toString();
-          if (output.contains("PropertyList for your app:")) {
+          String output = iosConfig.stdout.toString().trim();
+          // Regex to extract the <?xml ... </plist> block
+          Match? match = RegExp(r'(<\?xml[\s\S]*</plist>)').firstMatch(output);
+
+          if (match != null) {
+            String configContent = match.group(0)!;
             String iosPath =
                 "$projectName/ios/Runner/GoogleService-Info_prod.plist";
             await Directory("$projectName/ios/Runner").create(recursive: true);
-            await File(iosPath).writeAsString(
-              output.split("PropertyList for your app:").last.trim(),
-            );
+            await File(iosPath).writeAsString(configContent);
             print("iOS configuration placed at $iosPath");
           } else {
             print(
