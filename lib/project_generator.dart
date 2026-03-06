@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 class ProjectGenerator {
   Future<void> start() async {
@@ -62,6 +63,13 @@ class ProjectGenerator {
       "{{app_display_name}}": displayName,
     });
 
+    // Firebase Configuration
+    stdout.write("Do you want to configure Firebase? (y/n): ");
+    String firebaseChoice = stdin.readLineSync()!.toLowerCase();
+    if (firebaseChoice == 'y' || firebaseChoice == 'yes') {
+      await setupFirebase(projectName, androidPackage, iosBundle);
+    }
+
     print("\nRunning flutter pub get...\n");
 
     await Process.start(
@@ -72,6 +80,201 @@ class ProjectGenerator {
     ).then((p) => stdout.addStream(p.stdout));
 
     print("\nProject created successfully 🚀 at: ${projectDir.absolute.path}");
+  }
+
+  Future<void> setupFirebase(
+    String projectName,
+    String androidPackage,
+    String iosBundle,
+  ) async {
+    print("\nSetting up Firebase...\n");
+
+    try {
+      // 1. Check if firebase CLI is installed
+      var checkFirebase = await Process.run("firebase", ["--version"]);
+      if (checkFirebase.exitCode != 0) {
+        print("Error: Firebase CLI is not installed. Please install it first.");
+        return;
+      }
+
+      // 2. Firebase Login (will open browser if not logged in)
+      print("Checking Firebase authentication...");
+      await Process.start(
+        "firebase",
+        ["login"],
+        runInShell: true,
+        mode: ProcessStartMode.inheritStdio,
+      );
+
+      // 3. Find or Create Firebase Project
+      print("Checking for existing Firebase projects...");
+      var listProj = await Process.run("firebase", ["projects:list", "--json"]);
+      String? firebaseProjectId;
+
+      if (listProj.exitCode == 0) {
+        try {
+          final List<dynamic> projects = jsonDecode(listProj.stdout);
+          for (var proj in projects) {
+            if (proj['displayName']?.toString().toLowerCase() ==
+                projectName.toLowerCase()) {
+              firebaseProjectId = proj['projectId'];
+              print(
+                "Found existing project with name '$projectName': $firebaseProjectId",
+              );
+              break;
+            }
+          }
+        } catch (e) {
+          // If JSON parsing fails, we'll proceed to create a new project
+        }
+      }
+
+      if (firebaseProjectId == null) {
+        // Create new project
+        firebaseProjectId =
+            "app-${projectName.toLowerCase().replaceAll(RegExp(r'\s+'), '-')}-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}";
+        print("Creating Firebase project: $firebaseProjectId...");
+        var createProj = await Process.run("firebase", [
+          "projects:create",
+          firebaseProjectId,
+          "--display-name",
+          projectName,
+        ]);
+
+        if (createProj.exitCode != 0) {
+          print("Failed to create Firebase project: ${createProj.stderr}");
+          return;
+        }
+      }
+
+      // 4. Find or Create Apps
+      print("Checking for existing Firebase apps...");
+      var listApps = await Process.run("firebase", [
+        "apps:list",
+        "--project",
+        firebaseProjectId,
+        "--json",
+      ]);
+
+      String? androidAppId;
+      String? iosAppId;
+
+      if (listApps.exitCode == 0) {
+        try {
+          final List<dynamic> apps = jsonDecode(listApps.stdout);
+          for (var app in apps) {
+            String platform = app['platform']?.toString().toUpperCase() ?? "";
+            String namespace = app['namespace']?.toString() ?? "";
+
+            if (platform == "ANDROID" && namespace == androidPackage) {
+              androidAppId = app['appId'];
+              print("Found existing Android app: $androidAppId");
+            } else if (platform == "IOS" && namespace == iosBundle) {
+              iosAppId = app['appId'];
+              print("Found existing iOS app: $iosAppId");
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 4a. Create Android App if not exists
+      if (androidAppId == null) {
+        print("Registering Android app ($androidPackage)...");
+        var createAndroid = await Process.run("firebase", [
+          "apps:create",
+          "ANDROID",
+          projectName,
+          "--package-name",
+          androidPackage,
+          "--project",
+          firebaseProjectId,
+          "--json",
+        ]);
+        if (createAndroid.exitCode == 0) {
+          try {
+            androidAppId = jsonDecode(createAndroid.stdout)['appId'];
+          } catch (e) {}
+        }
+      }
+
+      // 5. Create iOS App if not exists
+      if (iosAppId == null) {
+        print("Registering iOS app ($iosBundle)...");
+        var createIos = await Process.run("firebase", [
+          "apps:create",
+          "IOS",
+          projectName,
+          "--bundle-id",
+          iosBundle,
+          "--project",
+          firebaseProjectId,
+          "--json",
+        ]);
+        if (createIos.exitCode == 0) {
+          try {
+            iosAppId = jsonDecode(createIos.stdout)['appId'];
+          } catch (e) {}
+        }
+      }
+
+      // 6. Download google-services.json for Android
+      if (androidAppId != null) {
+        print("Downloading Android configuration...");
+        var androidConfig = await Process.run("firebase", [
+          "apps:sdkconfig",
+          "ANDROID",
+          androidAppId,
+          "--project",
+          firebaseProjectId,
+        ]);
+
+        if (androidConfig.exitCode == 0) {
+          String androidPath =
+              "$projectName/android/app/src/prod/google-services.json";
+          await Directory(
+            "$projectName/android/app/src/prod",
+          ).create(recursive: true);
+          await File(androidPath).writeAsString(
+            androidConfig.stdout
+                .toString()
+                .split("JSON for your app:")
+                .last
+                .trim(),
+          );
+          print("Android configuration placed at $androidPath");
+        }
+      }
+
+      // 7. Download GoogleService-Info.plist for iOS
+      if (iosAppId != null) {
+        print("Downloading iOS configuration...");
+        var iosConfig = await Process.run("firebase", [
+          "apps:sdkconfig",
+          "IOS",
+          iosAppId,
+          "--project",
+          firebaseProjectId,
+        ]);
+
+        if (iosConfig.exitCode == 0) {
+          String iosPath =
+              "$projectName/ios/Runner/GoogleService-Info_prod.plist";
+          await Directory("$projectName/ios/Runner").create(recursive: true);
+          await File(iosPath).writeAsString(
+            iosConfig.stdout
+                .toString()
+                .split("PropertyList for your app:")
+                .last
+                .trim(),
+          );
+          print("iOS configuration placed at $iosPath");
+        }
+      }
+
+      print("\nFirebase setup completed successfully! 🔥");
+    } catch (e) {
+      print("An error occurred during Firebase setup: $e");
+    }
   }
 
   Future<void> applyFlavors(Directory directory, List<String> flavors) async {
