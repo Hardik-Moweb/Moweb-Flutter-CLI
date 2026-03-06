@@ -14,6 +14,22 @@ class ProjectGenerator {
     stdout.write("App Display Name: ");
     String displayName = stdin.readLineSync()!;
 
+    // Flavor selection
+    stdout.write(
+      "Which flavors you want to setup? (default: prod) [comma separated, e.g: dev, stag, uat]: ",
+    );
+    String flavorInput = stdin.readLineSync()!;
+    List<String> selectedFlavors = flavorInput
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    // Always ensure 'prod' is included as a default/fallback
+    if (!selectedFlavors.contains('prod')) {
+      selectedFlavors.insert(0, 'prod');
+    }
+
     print("\nCloning template project...\n");
 
     var gitResult = await Process.run("git", [
@@ -37,6 +53,8 @@ class ProjectGenerator {
         .replaceAll(RegExp(r'\s+'), '_')
         .replaceAll(RegExp(r'[^a-z0-9_]'), '');
 
+    await applyFlavors(projectDir, selectedFlavors);
+
     await replaceValues(projectDir, {
       "{{project_name}}": packageName,
       "{{android_package}}": androidPackage,
@@ -54,6 +72,67 @@ class ProjectGenerator {
     ).then((p) => stdout.addStream(p.stdout));
 
     print("\nProject created successfully 🚀 at: ${projectDir.absolute.path}");
+  }
+
+  Future<void> applyFlavors(Directory directory, List<String> flavors) async {
+    // 1. Handle folder/file duplication for those containing {{flavor}}
+    List<FileSystemEntity> entities = directory.listSync(recursive: true);
+    // Sort deepest first to avoid path issues
+    entities.sort((a, b) => b.path.length.compareTo(a.path.length));
+
+    for (var entity in entities) {
+      String path = entity.path;
+      String name = path.split(Platform.pathSeparator).last;
+
+      if (name.contains("{{flavor}}")) {
+        // This is a template for flavor-specific files or directories
+        for (var flavor in flavors) {
+          String newName = name.replaceAll("{{flavor}}", flavor);
+          String newPath = path.replaceRange(
+            path.length - name.length,
+            path.length,
+            newName,
+          );
+
+          if (entity is Directory) {
+            await Directory(newPath).create(recursive: true);
+          } else if (entity is File) {
+            await entity.copy(newPath);
+          }
+        }
+        // Delete the original template entity
+        await entity.delete(recursive: true);
+      }
+    }
+
+    // 2. Handle block repetition inside files
+    entities = directory.listSync(recursive: true);
+    for (var entity in entities) {
+      if (entity is File) {
+        try {
+          String content = await entity.readAsString();
+
+          // Regex to find blocks like /* @REPEAT_FLAVOR_START */ ... /* @REPEAT_FLAVOR_END */
+          final regex = RegExp(
+            r'/\*\s*@REPEAT_FLAVOR_START\s*\*/([\s\S]*?)/\*\s*@REPEAT_FLAVOR_END\s*\*/',
+            multiLine: true,
+          );
+
+          String newContent = content.replaceAllMapped(regex, (match) {
+            String template = match.group(1) ?? "";
+            String expanded = "";
+            for (var flavor in flavors) {
+              expanded += template.replaceAll("{{flavor}}", flavor);
+            }
+            return expanded;
+          });
+
+          if (newContent != content) {
+            await entity.writeAsString(newContent);
+          }
+        } catch (_) {}
+      }
+    }
   }
 
   Future<void> replaceValues(
