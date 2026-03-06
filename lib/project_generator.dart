@@ -162,19 +162,36 @@ class ProjectGenerator {
       if (listApps.exitCode == 0) {
         try {
           final List<dynamic> apps = jsonDecode(listApps.stdout);
+          print("Found ${apps.length} apps in project.");
           for (var app in apps) {
             String platform = app['platform']?.toString().toUpperCase() ?? "";
-            String namespace = app['namespace']?.toString() ?? "";
+            String appId = app['appId']?.toString() ?? "";
 
-            if (platform == "ANDROID" && namespace == androidPackage) {
-              androidAppId = app['appId'];
-              print("Found existing Android app: $androidAppId");
-            } else if (platform == "IOS" && namespace == iosBundle) {
-              iosAppId = app['appId'];
-              print("Found existing iOS app: $iosAppId");
+            // Firebase JSON can use different keys (packageId, bundleId, or namespace)
+            String identifier =
+                (app['namespace'] ?? app['packageId'] ?? app['bundleId'] ?? "")
+                    .toString()
+                    .trim();
+
+            print("Checking $platform app: $identifier ($appId)");
+
+            if (platform == "ANDROID" && identifier == androidPackage.trim()) {
+              androidAppId = appId;
+              print("Matched existing Android app: $androidAppId");
+            } else if (platform == "IOS" && identifier == iosBundle.trim()) {
+              iosAppId = appId;
+              print("Matched existing iOS app: $iosAppId");
             }
           }
-        } catch (e) {}
+
+          if (androidAppId == null || iosAppId == null) {
+            print("Could not match both apps. Available IDs in console: $apps");
+          }
+        } catch (e) {
+          print("Error parsing apps list: $e. Raw output: ${listApps.stdout}");
+        }
+      } else {
+        print("Error listing apps: ${listApps.stderr}");
       }
 
       // 4a. Create Android App if not exists
@@ -219,7 +236,7 @@ class ProjectGenerator {
 
       // 6. Download google-services.json for Android
       if (androidAppId != null) {
-        print("Downloading Android configuration...");
+        print("Downloading Android configuration for App ID: $androidAppId...");
         var androidConfig = await Process.run("firebase", [
           "apps:sdkconfig",
           "ANDROID",
@@ -229,25 +246,33 @@ class ProjectGenerator {
         ]);
 
         if (androidConfig.exitCode == 0) {
-          String androidPath =
-              "$projectName/android/app/src/prod/google-services.json";
-          await Directory(
-            "$projectName/android/app/src/prod",
-          ).create(recursive: true);
-          await File(androidPath).writeAsString(
-            androidConfig.stdout
-                .toString()
-                .split("JSON for your app:")
-                .last
-                .trim(),
-          );
-          print("Android configuration placed at $androidPath");
+          String output = androidConfig.stdout.toString();
+          if (output.contains("JSON for your app:")) {
+            String androidPath =
+                "$projectName/android/app/src/prod/google-services.json";
+            await Directory(
+              "$projectName/android/app/src/prod",
+            ).create(recursive: true);
+            await File(
+              androidPath,
+            ).writeAsString(output.split("JSON for your app:").last.trim());
+            print("Android configuration placed at $androidPath");
+          } else {
+            print(
+              "Error: Could not find JSON content in Android sdkconfig output.",
+            );
+            print("Output was: $output");
+          }
+        } else {
+          print("Error downloading Android sdkconfig: ${androidConfig.stderr}");
         }
+      } else {
+        print("Skipping Android download because App ID is null.");
       }
 
       // 7. Download GoogleService-Info.plist for iOS
       if (iosAppId != null) {
-        print("Downloading iOS configuration...");
+        print("Downloading iOS configuration for App ID: $iosAppId...");
         var iosConfig = await Process.run("firebase", [
           "apps:sdkconfig",
           "IOS",
@@ -257,18 +282,26 @@ class ProjectGenerator {
         ]);
 
         if (iosConfig.exitCode == 0) {
-          String iosPath =
-              "$projectName/ios/Runner/GoogleService-Info_prod.plist";
-          await Directory("$projectName/ios/Runner").create(recursive: true);
-          await File(iosPath).writeAsString(
-            iosConfig.stdout
-                .toString()
-                .split("PropertyList for your app:")
-                .last
-                .trim(),
-          );
-          print("iOS configuration placed at $iosPath");
+          String output = iosConfig.stdout.toString();
+          if (output.contains("PropertyList for your app:")) {
+            String iosPath =
+                "$projectName/ios/Runner/GoogleService-Info_prod.plist";
+            await Directory("$projectName/ios/Runner").create(recursive: true);
+            await File(iosPath).writeAsString(
+              output.split("PropertyList for your app:").last.trim(),
+            );
+            print("iOS configuration placed at $iosPath");
+          } else {
+            print(
+              "Error: Could not find PropertyList content in iOS sdkconfig output.",
+            );
+            print("Output was: $output");
+          }
+        } else {
+          print("Error downloading iOS sdkconfig: ${iosConfig.stderr}");
         }
+      } else {
+        print("Skipping iOS download because App ID is null.");
       }
 
       print("\nFirebase setup completed successfully! 🔥");
