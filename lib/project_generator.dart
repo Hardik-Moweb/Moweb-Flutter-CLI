@@ -113,7 +113,12 @@ class ProjectGenerator {
 
       if (listProj.exitCode == 0) {
         try {
-          final List<dynamic> projects = jsonDecode(listProj.stdout);
+          final dynamic decoded = jsonDecode(listProj.stdout);
+          final List<dynamic> projects =
+              (decoded is Map && decoded.containsKey('result'))
+              ? decoded['result']
+              : decoded;
+
           for (var proj in projects) {
             if (proj['displayName']?.toString().toLowerCase() ==
                 projectName.toLowerCase()) {
@@ -125,7 +130,7 @@ class ProjectGenerator {
             }
           }
         } catch (e) {
-          // If JSON parsing fails, we'll proceed to create a new project
+          print("Warning: Could not check for existing projects: $e");
         }
       }
 
@@ -161,7 +166,12 @@ class ProjectGenerator {
 
       if (listApps.exitCode == 0) {
         try {
-          final List<dynamic> apps = jsonDecode(listApps.stdout);
+          final dynamic decoded = jsonDecode(listApps.stdout);
+          final List<dynamic> apps =
+              (decoded is Map && decoded.containsKey('result'))
+              ? decoded['result']
+              : decoded;
+
           print("Found ${apps.length} apps in project.");
           for (var app in apps) {
             String platform = app['platform']?.toString().toUpperCase() ?? "";
@@ -173,8 +183,6 @@ class ProjectGenerator {
                     .toString()
                     .trim();
 
-            print("Checking $platform app: $identifier ($appId)");
-
             if (platform == "ANDROID" && identifier == androidPackage.trim()) {
               androidAppId = appId;
               print("Matched existing Android app: $androidAppId");
@@ -182,10 +190,6 @@ class ProjectGenerator {
               iosAppId = appId;
               print("Matched existing iOS app: $iosAppId");
             }
-          }
-
-          if (androidAppId == null || iosAppId == null) {
-            print("Could not match both apps. Available IDs in console: $apps");
           }
         } catch (e) {
           print("Error parsing apps list: $e. Raw output: ${listApps.stdout}");
@@ -209,7 +213,12 @@ class ProjectGenerator {
         ]);
         if (createAndroid.exitCode == 0) {
           try {
-            androidAppId = jsonDecode(createAndroid.stdout)['appId'];
+            final dynamic decoded = jsonDecode(createAndroid.stdout);
+            final dynamic result =
+                (decoded is Map && decoded.containsKey('result'))
+                ? decoded['result']
+                : decoded;
+            androidAppId = result['appId'];
           } catch (e) {}
         }
       }
@@ -229,7 +238,12 @@ class ProjectGenerator {
         ]);
         if (createIos.exitCode == 0) {
           try {
-            iosAppId = jsonDecode(createIos.stdout)['appId'];
+            final dynamic decoded = jsonDecode(createIos.stdout);
+            final dynamic result =
+                (decoded is Map && decoded.containsKey('result'))
+                ? decoded['result']
+                : decoded;
+            iosAppId = result['appId'];
           } catch (e) {}
         }
       }
