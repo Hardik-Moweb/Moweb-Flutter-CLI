@@ -866,6 +866,14 @@ class ProjectGenerator {
         '// id("com.google.gms.google-services")',
         'id("com.google.gms.google-services")',
       );
+      content = content.replaceAll(
+        '// isCoreLibraryDesugaringEnabled = true',
+        'isCoreLibraryDesugaringEnabled = true',
+      );
+      content = content.replaceAll(
+        '// coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")',
+        'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")',
+      );
       await appGradleFile.writeAsString(content);
     }
 
