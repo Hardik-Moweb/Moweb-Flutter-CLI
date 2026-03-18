@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'dart:convert';
+import 'utils/constants.dart';
 
 class ProjectGenerator {
   Map<String, String> firebaseValues = {};
@@ -69,7 +70,7 @@ class ProjectGenerator {
         "clone",
         "-b",
         "features/project_template",
-        "https://github.com/Hardik-Moweb/Flutter-Code-Structure",
+        CLIConstants.templateRepoUrl,
         projectName,
       ]);
 
@@ -146,7 +147,7 @@ class ProjectGenerator {
   ///
   /// Flow:
   ///  1. Check gh CLI is installed & authenticated.
-  ///  2. Try to create `Flutter-<ProjectName>` under `Moweb-Technologies-Pvt-Ltd` org.
+  ///  2. Try to create `${CLIConstants.githubRepoPrefix}<ProjectName>` under `${CLIConstants.githubOrg}` org.
   ///     - If the user has permission → create, push.
   ///  3. If the user lacks permission → ask for a manager-provided repo URL,
   ///     re-init git to point at that URL, push.
@@ -193,8 +194,8 @@ class ProjectGenerator {
     print("Logged in as: $ghUser");
 
     // 4. Determine repo name (Flutter-<ProjectName>)
-    const String org = "Moweb-Technologies-Pvt-Ltd";
-    String repoName = "Flutter-$projectName";
+    const String org = CLIConstants.githubOrg;
+    String repoName = "${CLIConstants.githubRepoPrefix}$projectName";
     String repoFullName = "$org/$repoName";
 
     print("\nChecking if you have permission to create a repo in $org...");
@@ -323,15 +324,39 @@ class ProjectGenerator {
     }
   }
 
-  /// Prompts the user to enter the manager-provided repo URL.
+  /// Prompts the user to enter the manager-provided repo URL and validates access.
   Future<String?> _askForRepoUrl() async {
-    print(
-      "\nEnter the repository URL provided by your manager (HTTPS or SSH):",
-    );
-    stdout.write("Repo URL: ");
-    String url = stdin.readLineSync()?.trim() ?? "";
-    if (url.isEmpty) return null;
-    return url;
+    while (true) {
+      print(
+        "\nEnter the repository URL provided by your manager (HTTPS or SSH):",
+      );
+      stdout.write("Repo URL: ");
+      String url = stdin.readLineSync()?.trim() ?? "";
+      if (url.isEmpty) return null;
+
+      print("Checking access for: $url ...");
+      // Validate access using gh CLI
+      var checkAccess = await Process.run("gh", ["repo", "view", url]);
+
+      if (checkAccess.exitCode == 0) {
+        print("✅  Access verified for: $url");
+        return url;
+      } else {
+        print(
+          "\n❌ Error: You do not have access to clone/view this repository or the URL is invalid.\n"
+          "${checkAccess.stderr}",
+        );
+
+        stdout.write(
+          "\nDo you want to continue with a new GitHub Repo Link? (y/n): ",
+        );
+        String retry = stdin.readLineSync()?.trim().toLowerCase() ?? "n";
+        if (retry != 'y' && retry != 'yes') {
+          print("Skipping GitHub setup as per user preference.");
+          return null;
+        }
+      }
+    }
   }
 
   /// Removes the cloned .git folder, re-inits, and pushes with "Initial Commit".
