@@ -3,8 +3,14 @@ import 'package:path/path.dart' as p;
 import 'dart:convert';
 
 class ProjectGenerator {
+  Map<String, String> firebaseValues = {};
+  List<String> flavorsList = [];
+  String projectName = "";
+  String androidPackage = "";
+  String iosBundle = "";
+
   Future<void> start() async {
-    String projectName = "";
+    projectName = "";
     while (projectName.isEmpty || projectName.contains(" ")) {
       stdout.write("Project Name (no spaces): ");
       projectName = stdin.readLineSync()!.trim();
@@ -13,7 +19,7 @@ class ProjectGenerator {
       }
     }
 
-    String androidPackage = "";
+    androidPackage = "";
     while (!_isValidPackage(androidPackage)) {
       stdout.write("Android Package (e.g., com.app.name): ");
       androidPackage = stdin.readLineSync()!.trim().toLowerCase();
@@ -24,7 +30,7 @@ class ProjectGenerator {
       }
     }
 
-    String iosBundle = "";
+    iosBundle = "";
     while (!_isValidPackage(iosBundle)) {
       stdout.write("iOS Bundle ID (e.g., com.app.name): ");
       iosBundle = stdin.readLineSync()!.trim().toLowerCase();
@@ -53,6 +59,8 @@ class ProjectGenerator {
     if (!selectedFlavors.contains('prod')) {
       selectedFlavors.insert(0, 'prod');
     }
+
+    flavorsList = selectedFlavors;
 
     print("\nCloning template project...\n");
 
@@ -197,11 +205,23 @@ class ProjectGenerator {
     String? repoUrl;
 
     if (hasOrgPermission) {
-      // 5a. Create the repo under the org
-      print("You have org access. Creating repository: $repoFullName ...");
-      repoUrl = await _createGitHubRepo(repoName: repoName, org: org);
+      // 5a. Ask for creation or link
+      print(
+        "\nYou have permission to create repositories in the $org organisation.",
+      );
+      print("1. Create new repository: $repoFullName");
+      print("2. Add existing repository link");
+      stdout.write("Select an option (1-2): ");
+      String githubOption = stdin.readLineSync()?.trim() ?? "1";
 
-      if (repoUrl == null) {
+      if (githubOption == "1") {
+        print("Creating repository: $repoFullName ...");
+        repoUrl = await _createGitHubRepo(repoName: repoName, org: org);
+      } else {
+        repoUrl = await _askForRepoUrl();
+      }
+
+      if (repoUrl == null && githubOption == "1") {
         print(
           "Failed to create repository under $org. Falling back to asking for repo URL...",
         );
@@ -598,6 +618,21 @@ class ProjectGenerator {
             ).create(recursive: true);
             await File(androidPath).writeAsString(configContent);
             print("Android configuration placed at $androidPath");
+
+            // Extract values for firebase_options
+            final config = jsonDecode(configContent);
+            final projectInfo = config['project_info'];
+            final client = config['client'][0];
+
+            firebaseValues['{{android_api_key_prod}}'] =
+                client['api_key'][0]['current_key'];
+            firebaseValues['{{android_app_id_prod}}'] =
+                client['client_info']['mobilesdk_app_id'];
+            firebaseValues['{{messaging_sender_id_prod}}'] =
+                projectInfo['project_number'];
+            firebaseValues['{{project_id_prod}}'] = projectInfo['project_id'];
+            firebaseValues['{{storage_bucket_prod}}'] =
+                projectInfo['storage_bucket'];
           } else {
             print(
               "Error: Could not find JSON content in Android sdkconfig output.",
@@ -633,6 +668,19 @@ class ProjectGenerator {
             await Directory("$projectName/ios/Runner").create(recursive: true);
             await File(iosPath).writeAsString(configContent);
             print("iOS configuration placed at $iosPath");
+
+            // Extract values for firebase_options
+            firebaseValues['{{ios_api_key_prod}}'] =
+                RegExp(
+                  r'<key>API_KEY</key>\s*<string>([^<]+)</string>',
+                ).firstMatch(configContent)?.group(1) ??
+                "";
+            firebaseValues['{{ios_app_id_prod}}'] =
+                RegExp(
+                  r'<key>GOOGLE_APP_ID</key>\s*<string>([^<]+)</string>',
+                ).firstMatch(configContent)?.group(1) ??
+                "";
+            firebaseValues['{{ios_bundle_id_prod}}'] = iosBundle;
           } else {
             print(
               "Error: Could not find PropertyList content in iOS sdkconfig output.",
@@ -982,6 +1030,54 @@ class ProjectGenerator {
         'return preferences.getString(_fcmToken) ?? "";\n  }',
       );
       await appPrefFile.writeAsString(content);
+    }
+
+    // 7. Dynamic replacement of Firebase values in firebase_options.dart
+    final firebaseOptionsFile = File('$path/lib/firebase_options.dart');
+    if (await firebaseOptionsFile.exists()) {
+      // First, handle our extracted prod values
+      await replaceValues(projectDir, firebaseValues);
+
+      // Now fill all remaining placeholders for other flavors
+      String content = await firebaseOptionsFile.readAsString();
+      for (var flavor in flavorsList) {
+        if (flavor == 'prod') continue;
+
+        content = content.replaceAll(
+          '{{android_api_key_$flavor}}',
+          'YOUR_DEV_API_KEY',
+        );
+        content = content.replaceAll(
+          '{{android_app_id_$flavor}}',
+          'YOUR_DEV_APP_ID',
+        );
+        content = content.replaceAll(
+          '{{messaging_sender_id_$flavor}}',
+          'YOUR_DEV_MESSAGING_SENDER_ID',
+        );
+        content = content.replaceAll(
+          '{{project_id_$flavor}}',
+          'YOUR_DEV_PROJECT_ID',
+        );
+        content = content.replaceAll(
+          '{{storage_bucket_$flavor}}',
+          'YOUR_DEV_PROJECT_ID.firebasestorage.app',
+        );
+
+        content = content.replaceAll(
+          '{{ios_api_key_$flavor}}',
+          'YOUR_DEV_API_KEY',
+        );
+        content = content.replaceAll(
+          '{{ios_app_id_$flavor}}',
+          'YOUR_DEV_APP_ID',
+        );
+        content = content.replaceAll(
+          '{{ios_bundle_id_$flavor}}',
+          '$iosBundle.$flavor',
+        );
+      }
+      await firebaseOptionsFile.writeAsString(content);
     }
 
     print("Firebase code enabled successfully! ✅");
