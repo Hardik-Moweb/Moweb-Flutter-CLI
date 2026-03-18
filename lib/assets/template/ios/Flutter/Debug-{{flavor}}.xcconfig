@@ -1,0 +1,14 @@
+#include "Debug.xcconfig"
+#include "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug-{{flavor}}.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER_{{flavor}} = {{ios_bundle}}.{{flavor}}
+PRODUCT_BUNDLE_IDENTIFIER_prod = {{ios_bundle}}
+APP_BUNDLE_IDENTIFIER = $(PRODUCT_BUNDLE_IDENTIFIER_{{flavor}})
+
+APP_DISPLAY_NAME_{{flavor}} = {{app_display_name}} ({{flavor}})
+APP_DISPLAY_NAME_prod = {{app_display_name}}
+APP_DISPLAY_NAME = $(APP_DISPLAY_NAME_{{flavor}})
+
+FLAVOR = {{flavor}}
+
+REVERSED_CLIENT_ID = com.googleusercontent.apps.629423613771-bmaprjd7js9dem4cqnh7c8hmj5tdv66u

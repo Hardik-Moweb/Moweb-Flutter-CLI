@@ -1,9 +1,16 @@
 import 'dart:io';
+import 'dart:async';
+import 'dart:isolate';
 import 'package:path/path.dart' as p;
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'utils/constants.dart';
 
 class ProjectGenerator {
+  static const String currentVersion = "1.0.0";
+  static const String repoRawUrl =
+      "https://raw.githubusercontent.com/Hardik-Moweb/Moweb-Flutter-CLI/main/moweb_flutter_cli/pubspec.yaml";
+
   Map<String, String> firebaseValues = {};
   List<String> flavorsList = [];
   String projectName = "";
@@ -11,7 +18,30 @@ class ProjectGenerator {
   String iosBundle = "";
 
   Future<void> start() async {
+    try {
+      await _startInternal();
+    } catch (e) {
+      if (e.toString().contains("GITHUB_TIMEOUT")) {
+        print(
+          "\n\n[!] GitHub authentication timed out (30s). Restarting complete process from scratch...\n",
+        );
+        projectName = ""; // Reset for fresh start
+        await start();
+      } else {
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> _startInternal() async {
+    await checkForUpdates();
+    // Reset state for fresh start
     projectName = "";
+    androidPackage = "";
+    iosBundle = "";
+    flavorsList = [];
+    firebaseValues = {};
+
     while (true) {
       stdout.write("Project Name: ");
       String input = stdin.readLineSync()!.trim();
@@ -132,23 +162,37 @@ class ProjectGenerator {
 
     flavorsList = selectedFlavors;
 
-    print("\nCloning template project...\n");
+    print("\nPreparing template project...\n");
 
     try {
-      var gitResult = await Process.run("git", [
-        "clone",
-        "-b",
-        "features/project_template",
-        CLIConstants.templateRepoUrl,
-        projectName,
-      ]);
+      // Find the local template path using package resolution
+      Uri? packageUri = await Isolate.resolvePackageUri(
+        Uri.parse('package:moweb_flutter_cli/assets/template/'),
+      );
 
-      if (gitResult.exitCode != 0) {
-        print("Failed to clone template:\n${gitResult.stderr}");
+      if (packageUri == null) {
+        // Fallback for local development or if resolvePackageUri fails
+        String scriptPath = Platform.script.toFilePath();
+        Directory binDir = File(scriptPath).parent;
+        Directory packageDir = binDir.parent;
+        String templatePath = p.join(
+          packageDir.path,
+          'lib',
+          'assets',
+          'template',
+        );
+        packageUri = Uri.file(templatePath);
+      }
+
+      Directory templateDir = Directory(packageUri.toFilePath());
+      if (!await templateDir.exists()) {
+        print("Error: Template not found at ${templateDir.path}");
         return;
       }
+
+      await _copyDirectory(templateDir, Directory(projectName), "");
     } catch (e) {
-      print("Error during clone: $e");
+      print("Error preparing template: $e");
       return;
     }
 
@@ -187,39 +231,53 @@ class ProjectGenerator {
     }
 
     if (firebaseChoice == 'y') {
-      String firebaseMode = "";
-      while (firebaseMode != '1' && firebaseMode != '2') {
-        print("\nFirebase Configuration Options:");
-        print("1. Create project and apps via Firebase CLI (requires login)?");
-        print(
-          "2. Manual: I already have a project / will add credentials later manually?",
-        );
-        stdout.write("Select an option (1-2): ");
-        firebaseMode = stdin.readLineSync()?.trim() ?? "";
-
-        if (firebaseMode != '1' && firebaseMode != '2') {
-          print("Error: Please enter 1 or 2.");
-        }
-      }
-
-      if (firebaseMode == '1') {
-        try {
-          await setupFirebase(projectName, androidPackage, iosBundle);
-        } catch (e) {
+      bool firebaseDone = false;
+      while (!firebaseDone) {
+        String firebaseMode = "";
+        while (firebaseMode != '1' && firebaseMode != '2') {
+          print("\nFirebase Configuration Options:");
           print(
-            "\nFirebase setup failed ($e). Continuing with project generation placeholders...",
+            "1. Create project and apps via Firebase CLI (requires login)?",
           );
+          print(
+            "2. Manual: I already have a project / will add credentials later manually?",
+          );
+          stdout.write("Select an option (1-2): ");
+          firebaseMode = stdin.readLineSync()?.trim() ?? "";
+
+          if (firebaseMode != '1' && firebaseMode != '2') {
+            print("Error: Please enter 1 or 2.");
+          }
         }
-      } else {
-        print(
-          "\nSkipping automatic Firebase project creation. Manual setup selected.",
-        );
-        print(
-          "  • You must manually place 'google-services.json' in: android/app/src/<flavor>/",
-        );
-        print(
-          "  • You must manually place 'GoogleService-Info_<flavor>.plist' in: ios/Runner/",
-        );
+
+        if (firebaseMode == '1') {
+          try {
+            await setupFirebase(projectName, androidPackage, iosBundle);
+            firebaseDone = true;
+          } catch (e) {
+            if (e.toString().contains("TIMEOUT")) {
+              print(
+                "\n[!] Firebase login timed out (30s). Please try again or choose another option.",
+              );
+              continue;
+            }
+            print(
+              "\nFirebase setup failed ($e). Continuing with project generation placeholders...",
+            );
+            firebaseDone = true;
+          }
+        } else {
+          print(
+            "\nSkipping automatic Firebase project creation. Manual setup selected.",
+          );
+          print(
+            "  • You must manually place 'google-services.json' in: android/app/src/<flavor>/",
+          );
+          print(
+            "  • You must manually place 'GoogleService-Info_<flavor>.plist' in: ios/Runner/",
+          );
+          firebaseDone = true;
+        }
       }
 
       // Both modes enable the base Firebase code/dependencies/main.dart init
@@ -249,6 +307,70 @@ class ProjectGenerator {
     await setupGitHub(projectName, projectDir);
 
     print("\nProject created successfully 🚀 at: ${projectDir.absolute.path}");
+  }
+
+  // ── Update Logic ──────────────────────────────────────────────────────────
+
+  Future<void> checkForUpdates() async {
+    print("Checking for updates...");
+    try {
+      final response = await http
+          .get(Uri.parse(repoRawUrl))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final content = response.body;
+        final versionLine = content
+            .split('\n')
+            .firstWhere(
+              (line) => line.startsWith('version: '),
+              orElse: () => "",
+            );
+
+        if (versionLine.isNotEmpty) {
+          final remoteVersion = versionLine
+              .replaceFirst('version: ', '')
+              .trim();
+
+          if (_isNewer(remoteVersion, currentVersion)) {
+            print(
+              "\n[!] A new version of MowebFlutterCLI is available: $remoteVersion (Current: $currentVersion)",
+            );
+            print("Updating MowebFlutterCLI...");
+            var result = await Process.run("dart", [
+              "pub",
+              "global",
+              "activate",
+              "--source",
+              "git",
+              "https://github.com/Hardik-Moweb/Moweb-Flutter-CLI.git",
+              "--path",
+              "moweb_flutter_cli",
+            ]);
+            if (result.exitCode == 0) {
+              print("Update successful! Please run the command again.");
+              exit(0);
+            } else {
+              print("Update failed: ${result.stderr}");
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print("Info: Could not check for updates (offline or repo moved).");
+    }
+  }
+
+  bool _isNewer(String remote, String local) {
+    try {
+      List<int> remoteParts = remote.split('.').map(int.parse).toList();
+      List<int> localParts = local.split('.').map(int.parse).toList();
+      for (int i = 0; i < 3; i++) {
+        if (remoteParts[i] > localParts[i]) return true;
+        if (remoteParts[i] < localParts[i]) return false;
+      }
+    } catch (_) {}
+    return false;
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -303,7 +425,20 @@ class ProjectGenerator {
         runInShell: true,
         mode: ProcessStartMode.inheritStdio,
       );
+
+      // 30 second timeout for GitHub login
+      final timer = Timer(Duration(seconds: 30), () {
+        loginProc.kill();
+      });
+
       int loginExit = await loginProc.exitCode;
+      bool wasTimedOut = !timer.isActive;
+      timer.cancel();
+
+      if (wasTimedOut) {
+        throw Exception("GITHUB_TIMEOUT");
+      }
+
       if (loginExit != 0) {
         print("GitHub login failed. Skipping GitHub setup.");
         return;
@@ -631,7 +766,19 @@ class ProjectGenerator {
           mode: ProcessStartMode.inheritStdio,
         );
 
+        // 30 second timeout for login
+        final timer = Timer(Duration(seconds: 30), () {
+          loginProc.kill();
+        });
+
         int exitCode = await loginProc.exitCode;
+        bool wasTimedOut = !timer.isActive;
+        timer.cancel();
+
+        if (wasTimedOut) {
+          throw Exception("TIMEOUT: Firebase login took too long.");
+        }
+
         if (exitCode != 0) {
           print(
             "Firebase login failed. Skipping Firebase setup and continuing with project creation...",

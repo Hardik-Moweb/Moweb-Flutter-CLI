@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        /* @REPEAT_FLAVOR_START */
+        {
+            "name": "{{app_display_name}} ({{flavor}})",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "args": [
+                "--flavor",
+                "{{flavor}}"
+            ]
+        }
+        /* @REPEAT_FLAVOR_END */
+    ]
+}
