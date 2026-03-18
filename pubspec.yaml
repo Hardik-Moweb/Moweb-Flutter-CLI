@@ -1,17 +1,15 @@
-name: company_app_cli
-description: A sample command-line application.
+name: moweb_flutter_cli
+description: A Flutter project generator CLI by Moweb.
 version: 1.0.0
-# repository: https://github.com/my_org/my_repo
 
 environment:
   sdk: ^3.10.1
 
-# Add regular dependencies here.
 dependencies:
   path: ^1.9.0
 
 executables:
-  company_app_cli:
+  moweb_flutter_cli:
 
 dev_dependencies:
   lints: ^6.0.0
