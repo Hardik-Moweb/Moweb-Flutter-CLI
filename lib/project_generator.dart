@@ -187,13 +187,46 @@ class ProjectGenerator {
     }
 
     if (firebaseChoice == 'y') {
+      String firebaseMode = "";
+      while (firebaseMode != '1' && firebaseMode != '2') {
+        print("\nFirebase Configuration Options:");
+        print("1. Create project and apps via Firebase CLI (requires login)?");
+        print(
+          "2. Manual: I already have a project / will add credentials later manually?",
+        );
+        stdout.write("Select an option (1-2): ");
+        firebaseMode = stdin.readLineSync()?.trim() ?? "";
+
+        if (firebaseMode != '1' && firebaseMode != '2') {
+          print("Error: Please enter 1 or 2.");
+        }
+      }
+
+      if (firebaseMode == '1') {
+        try {
+          await setupFirebase(projectName, androidPackage, iosBundle);
+        } catch (e) {
+          print(
+            "\nFirebase setup failed ($e). Continuing with project generation placeholders...",
+          );
+        }
+      } else {
+        print(
+          "\nSkipping automatic Firebase project creation. Manual setup selected.",
+        );
+        print(
+          "  • You must manually place 'google-services.json' in: android/app/src/<flavor>/",
+        );
+        print(
+          "  • You must manually place 'GoogleService-Info_<flavor>.plist' in: ios/Runner/",
+        );
+      }
+
+      // Both modes enable the base Firebase code/dependencies/main.dart init
       try {
-        await setupFirebase(projectName, androidPackage, iosBundle);
         await enableFirebaseCode(projectDir);
       } catch (e) {
-        print(
-          "\nFirebase setup failed ($e). Continuing with project generation without Firebase...",
-        );
+        print("\nError enabling Firebase code structures: $e");
       }
     }
 
@@ -432,12 +465,28 @@ class ProjectGenerator {
   /// Prompts the user to enter the manager-provided repo URL and validates access.
   Future<String?> _askForRepoUrl() async {
     while (true) {
-      print(
-        "\nEnter the repository URL provided by your manager (HTTPS or SSH):",
-      );
+      print("\nEnter the repository URL (HTTPS or SSH):");
       stdout.write("Repo URL: ");
       String url = stdin.readLineSync()?.trim() ?? "";
-      if (url.isEmpty) return null;
+
+      if (url.isEmpty) {
+        print("Error: Repository URL cannot be empty.");
+        continue;
+      }
+
+      // Basic validation for GitHub Repo URL (HTTPS or SSH)
+      bool isValid =
+          url.startsWith("https://github.com/") ||
+          url.startsWith("git@github.com:");
+
+      if (!isValid) {
+        print(
+          "Error: Invalid GitHub URL format.\n"
+          "Ex: https://github.com/owner/repo.git\n"
+          "    git@github.com:owner/repo.git",
+        );
+        continue;
+      }
 
       print("Checking access for: $url ...");
       // Validate access using gh CLI
@@ -1191,13 +1240,34 @@ class ProjectGenerator {
     final firebaseOptionsFile = File('$path/lib/firebase_options.dart');
     if (await firebaseOptionsFile.exists()) {
       // First, ensure all 'prod' keys have at least a default if extraction failed
-      firebaseValues.putIfAbsent('{{android_api_key_prod}}', () => 'YOUR_PROD_API_KEY');
-      firebaseValues.putIfAbsent('{{android_app_id_prod}}', () => 'YOUR_PROD_APP_ID');
-      firebaseValues.putIfAbsent('{{messaging_sender_id_prod}}', () => 'YOUR_PROD_SENDER_ID');
-      firebaseValues.putIfAbsent('{{project_id_prod}}', () => 'YOUR_PROD_PROJECT_ID');
-      firebaseValues.putIfAbsent('{{storage_bucket_prod}}', () => 'YOUR_PROD_PROJECT_ID.firebasestorage.app');
-      firebaseValues.putIfAbsent('{{ios_api_key_prod}}', () => 'YOUR_PROD_API_KEY');
-      firebaseValues.putIfAbsent('{{ios_app_id_prod}}', () => 'YOUR_PROD_APP_ID');
+      firebaseValues.putIfAbsent(
+        '{{android_api_key_prod}}',
+        () => 'YOUR_PROD_API_KEY',
+      );
+      firebaseValues.putIfAbsent(
+        '{{android_app_id_prod}}',
+        () => 'YOUR_PROD_APP_ID',
+      );
+      firebaseValues.putIfAbsent(
+        '{{messaging_sender_id_prod}}',
+        () => 'YOUR_PROD_SENDER_ID',
+      );
+      firebaseValues.putIfAbsent(
+        '{{project_id_prod}}',
+        () => 'YOUR_PROD_PROJECT_ID',
+      );
+      firebaseValues.putIfAbsent(
+        '{{storage_bucket_prod}}',
+        () => 'YOUR_PROD_PROJECT_ID.firebasestorage.app',
+      );
+      firebaseValues.putIfAbsent(
+        '{{ios_api_key_prod}}',
+        () => 'YOUR_PROD_API_KEY',
+      );
+      firebaseValues.putIfAbsent(
+        '{{ios_app_id_prod}}',
+        () => 'YOUR_PROD_APP_ID',
+      );
       firebaseValues.putIfAbsent('{{ios_bundle_id_prod}}', () => iosBundle);
 
       // Apply extracted context-based values (mostly for prod)
@@ -1246,6 +1316,6 @@ class ProjectGenerator {
       await firebaseOptionsFile.writeAsString(content);
     }
 
-    print("MowebFlutterCLI setup completed successfully! ✅");
+    print("Project setup completed successfully! ✅");
   }
 }
