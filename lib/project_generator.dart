@@ -1460,7 +1460,43 @@ class ProjectGenerator {
         );
       }
 
-      await firebaseOptionsFile.writeAsString(content);
+    }
+
+    // 8. Uncomment version_update in landing_page.dart
+    final landingPageFile = File('$path/lib/landing_page.dart');
+    if (await landingPageFile.exists()) {
+      String content = await landingPageFile.readAsString();
+      // Use the actual package name for replacement
+      final packageName = path.split(Platform.pathSeparator).last.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+      
+      content = content.replaceAll(
+        '// import \'package:$packageName/components/version_update.dart\';',
+        'import \'package:$packageName/components/version_update.dart\';',
+      );
+      content = content.replaceAll(
+        '// final updateRequired = await checkVersion(context);',
+        'final updateRequired = await checkVersion(context);',
+      );
+      content = content.replaceAll(
+        '// if (updateRequired != true) {',
+        'if (updateRequired != true) {',
+      );
+      content = content.replaceAll(
+        'if (true) { // updateRequired != true (Firebase disabled)',
+        'if (updateRequired != true) {',
+      );
+      await landingPageFile.writeAsString(content);
+    }
+
+    // 9. Ensure version_update.dart is NOT commented out
+    final versionUpdateFile = File('$path/lib/components/version_update.dart');
+    if (await versionUpdateFile.exists()) {
+      String content = await versionUpdateFile.readAsString();
+      if (content.trim().startsWith('/*') && content.trim().endsWith('*/')) {
+        content = content.trim();
+        content = content.substring(2, content.length - 2).trim();
+        await versionUpdateFile.writeAsString(content);
+      }
     }
 
     print("Project setup completed successfully! ✅");

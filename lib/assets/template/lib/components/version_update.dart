@@ -1,3 +1,4 @@
+/*
 import 'package:{{project_name}}/config/flavor_config.dart';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -141,7 +142,7 @@ showUpdateDialog({
               const SizedBox(height: 20),
               Row(
                 children: [
-                  const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+                   const Icon(Icons.arrow_forward_ios_rounded, size: 16),
                   SizedBox(width: 3),
                   Expanded(
                     child: Row(
@@ -201,3 +202,4 @@ showUpdateDialog({
     },
   );
 }
+*/

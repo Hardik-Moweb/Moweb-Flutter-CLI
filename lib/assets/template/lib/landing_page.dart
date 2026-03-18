@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:{{project_name}}/components/version_update.dart';
+// import 'package:{{project_name}}/components/version_update.dart';
 import 'package:{{project_name}}/features/auth/screens/login_page.dart';
 import 'package:{{project_name}}/features/auth/models/user_data_model.dart';
 import 'package:{{project_name}}/utils/global_state.dart';
@@ -32,11 +32,12 @@ class _LandingPageState extends State<LandingPage> {
     Future.delayed(const Duration(seconds: 3), () async {
       if (!mounted) return;
       // Check for version updates
-      final updateRequired = await checkVersion(context);
+      // final updateRequired = await checkVersion(context);
 
       if (!mounted) return;
       // Only navigate if no forced update is required
-      if (updateRequired != true) {
+      // if (updateRequired != true) {
+      if (true) {
         if (userLogin == true) {
           globalState.userData = UserDataModel.fromJson(
             json.decode(prefs.getString(Pref.userData) ?? ""),
