@@ -1,19 +1,42 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'dart:convert';
 
 class ProjectGenerator {
   Future<void> start() async {
-    stdout.write("Project Name: ");
-    String projectName = stdin.readLineSync()!;
+    String projectName = "";
+    while (projectName.isEmpty || projectName.contains(" ")) {
+      stdout.write("Project Name (no spaces): ");
+      projectName = stdin.readLineSync()!.trim();
+      if (projectName.contains(" ")) {
+        print("Error: Project name should not contain spaces.");
+      }
+    }
 
-    stdout.write("Android Package: ");
-    String androidPackage = stdin.readLineSync()!;
+    String androidPackage = "";
+    while (!_isValidPackage(androidPackage)) {
+      stdout.write("Android Package (e.g., com.app.name): ");
+      androidPackage = stdin.readLineSync()!.trim().toLowerCase();
+      if (!_isValidPackage(androidPackage)) {
+        print(
+          "Error: Invalid format. Use small case and at least 2 dots (e.g., com.company.app).",
+        );
+      }
+    }
 
-    stdout.write("iOS Bundle ID: ");
-    String iosBundle = stdin.readLineSync()!;
+    String iosBundle = "";
+    while (!_isValidPackage(iosBundle)) {
+      stdout.write("iOS Bundle ID (e.g., com.app.name): ");
+      iosBundle = stdin.readLineSync()!.trim().toLowerCase();
+      if (!_isValidPackage(iosBundle)) {
+        print(
+          "Error: Invalid format. Use small case and at least 2 dots (e.g., com.company.app).",
+        );
+      }
+    }
 
     stdout.write("App Display Name: ");
-    String displayName = stdin.readLineSync()!;
+    String displayName = stdin.readLineSync()!.trim();
 
     // Flavor selection
     stdout.write(
@@ -33,54 +56,344 @@ class ProjectGenerator {
 
     print("\nCloning template project...\n");
 
-    var gitResult = await Process.run("git", [
-      "clone",
-      "-b",
-      "features/project_template",
-      "https://github.com/Hardik-Moweb/Flutter-Code-Structure",
-      projectName,
-    ]);
+    try {
+      var gitResult = await Process.run("git", [
+        "clone",
+        "-b",
+        "features/project_template",
+        "https://github.com/Hardik-Moweb/Flutter-Code-Structure",
+        projectName,
+      ]);
 
-    if (gitResult.exitCode != 0) {
-      print("Failed to clone template:\n${gitResult.stderr}");
-      exit(1);
+      if (gitResult.exitCode != 0) {
+        print("Failed to clone template:\n${gitResult.stderr}");
+        return;
+      }
+    } catch (e) {
+      print("Error during clone: $e");
+      return;
     }
 
     Directory projectDir = Directory(projectName);
 
-    // Convert Project Name to a safe package name for {{project_name}} (e.g., "Loan Calculator" -> "loan_calculator")
-    String packageName = projectName
-        .toLowerCase()
-        .replaceAll(RegExp(r'\s+'), '_')
-        .replaceAll(RegExp(r'[^a-z0-9_]'), '');
+    // Convert Project Name to a safe package name for {{project_name}} (e.g., "LoanCalculator" -> "loan_calculator")
+    String packageName = projectName.toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9_]'),
+      '_',
+    );
 
-    await applyFlavors(projectDir, selectedFlavors);
+    try {
+      await applyFlavors(projectDir, selectedFlavors);
 
-    await replaceValues(projectDir, {
-      "{{project_name}}": packageName,
-      "{{android_package}}": androidPackage,
-      "{{ios_bundle}}": iosBundle,
-      "{{app_display_name}}": displayName,
-    });
+      await replaceValues(projectDir, {
+        "{{project_name}}": packageName,
+        "{{android_package}}": androidPackage,
+        "{{ios_bundle}}": iosBundle,
+        "{{app_display_name}}": displayName,
+      });
+    } catch (e) {
+      print("Warning: Error during value replacement: $e. Continuing...");
+    }
 
     // Firebase Configuration
     stdout.write("Do you want to configure Firebase? (y/n): ");
     String firebaseChoice = stdin.readLineSync()!.toLowerCase();
     if (firebaseChoice == 'y' || firebaseChoice == 'yes') {
-      await setupFirebase(projectName, androidPackage, iosBundle);
+      try {
+        await setupFirebase(projectName, androidPackage, iosBundle);
+        await enableFirebaseCode(projectDir);
+      } catch (e) {
+        print(
+          "\nFirebase setup failed ($e). Continuing with project generation without Firebase...",
+        );
+      }
     }
 
     print("\nRunning flutter pub get...\n");
 
-    await Process.start(
-      "flutter",
-      ["pub", "get"],
-      workingDirectory: projectName,
-      runInShell: true,
-    ).then((p) => stdout.addStream(p.stdout));
+    try {
+      await Process.start(
+        "flutter",
+        ["pub", "get"],
+        workingDirectory: projectName,
+        runInShell: true,
+      ).then((p) => stdout.addStream(p.stdout));
+    } catch (e) {
+      print(
+        "Warning: 'flutter pub get' failed ($e). You may need to run it manually. Continuing...",
+      );
+    }
+
+    // ── GitHub Repository Setup ──────────────────────────────────────────────
+    await setupGitHub(projectName, projectDir);
 
     print("\nProject created successfully 🚀 at: ${projectDir.absolute.path}");
   }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // GitHub Setup
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /// Handles the full GitHub repository creation and initial push flow.
+  ///
+  /// Flow:
+  ///  1. Check gh CLI is installed & authenticated.
+  ///  2. Try to create `Flutter-<ProjectName>` under `Moweb-Technologies-Pvt-Ltd` org.
+  ///     - If the user has permission → create, push.
+  ///  3. If the user lacks permission → ask for a manager-provided repo URL,
+  ///     re-init git to point at that URL, push.
+  Future<void> setupGitHub(String projectName, Directory projectDir) async {
+    print("\n──────────────────────────────────────────────");
+    stdout.write("Do you want to set up a GitHub repository? (y/n): ");
+    String choice = stdin.readLineSync()!.toLowerCase();
+    if (choice != 'y' && choice != 'yes') {
+      print("Skipping GitHub setup.");
+      return;
+    }
+
+    // 1. Check gh CLI
+    print("\nChecking GitHub CLI (gh)...");
+    var ghCheck = await Process.run("gh", ["--version"]);
+    if (ghCheck.exitCode != 0) {
+      print(
+        "Error: GitHub CLI (gh) is not installed. Please install it from https://cli.github.com and try again.",
+      );
+      return;
+    }
+
+    // 2. Check gh auth status
+    print("Checking GitHub authentication...");
+    var authStatus = await Process.run("gh", ["auth", "status"]);
+    if (authStatus.exitCode != 0) {
+      print("Not logged in to GitHub. Attempting login...");
+      var loginProc = await Process.start(
+        "gh",
+        ["auth", "login"],
+        runInShell: true,
+        mode: ProcessStartMode.inheritStdio,
+      );
+      int loginExit = await loginProc.exitCode;
+      if (loginExit != 0) {
+        print("GitHub login failed. Skipping GitHub setup.");
+        return;
+      }
+    }
+
+    // 3. Get the logged-in GitHub username
+    var whoami = await Process.run("gh", ["api", "user", "--jq", ".login"]);
+    String ghUser = whoami.stdout.toString().trim();
+    print("Logged in as: $ghUser");
+
+    // 4. Determine repo name (Flutter-<ProjectName>)
+    const String org = "Moweb-Technologies-Pvt-Ltd";
+    String repoName = "Flutter-$projectName";
+    String repoFullName = "$org/$repoName";
+
+    print("\nChecking if you have permission to create a repo in $org...");
+
+    // Check membership/permission in the org
+    bool hasOrgPermission = await _checkOrgCreatePermission(org, ghUser);
+
+    String? repoUrl;
+
+    if (hasOrgPermission) {
+      // 5a. Create the repo under the org
+      print("You have org access. Creating repository: $repoFullName ...");
+      repoUrl = await _createGitHubRepo(repoName: repoName, org: org);
+
+      if (repoUrl == null) {
+        print(
+          "Failed to create repository under $org. Falling back to asking for repo URL...",
+        );
+        repoUrl = await _askForRepoUrl();
+      }
+    } else {
+      // 5b. No permission — ask for manager-provided URL
+      print(
+        "\n⚠️  You do not have permission to create repositories in the $org organisation.",
+      );
+      print(
+        "Please ask your manager to:\n"
+        "  • Create the repository (Flutter-$projectName) in the $org org\n"
+        "  • Grant you push access to it",
+      );
+      repoUrl = await _askForRepoUrl();
+    }
+
+    if (repoUrl == null || repoUrl.isEmpty) {
+      print("No repository URL provided. Skipping GitHub push.");
+      return;
+    }
+
+    // 6. Re-initialise git inside the generated project and push
+    await _initAndPush(projectDir, repoUrl);
+  }
+
+  /// Returns true if the user is a member of the org with create-repo rights.
+  Future<bool> _checkOrgCreatePermission(String org, String ghUser) async {
+    try {
+      // Check membership
+      var memberCheck = await Process.run("gh", [
+        "api",
+        "orgs/$org/members/$ghUser",
+        "--silent",
+      ]);
+      if (memberCheck.exitCode != 0) {
+        return false; // Not a member
+      }
+
+      // Check the user's org role (member vs admin — admins can always create)
+      var roleCheck = await Process.run("gh", [
+        "api",
+        "orgs/$org/memberships/$ghUser",
+        "--jq",
+        ".role",
+      ]);
+      String role = roleCheck.stdout.toString().trim();
+      if (role == "admin") return true;
+
+      // Check org's member_allowed_repository_creation_type policy
+      var orgInfo = await Process.run("gh", [
+        "api",
+        "orgs/$org",
+        "--jq",
+        ".members_can_create_repositories",
+      ]);
+      String canCreate = orgInfo.stdout.toString().trim();
+      return canCreate == "true";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Creates a GitHub repository under [org] named [repoName] (private).
+  /// Returns the SSH clone URL on success, or null on failure.
+  Future<String?> _createGitHubRepo({
+    required String repoName,
+    required String org,
+  }) async {
+    try {
+      var result = await Process.run("gh", [
+        "repo",
+        "create",
+        "$org/$repoName",
+        "--private",
+        "--confirm",
+        "--description",
+        "Flutter project generated by CompanyAppCLI",
+      ]);
+
+      if (result.exitCode == 0) {
+        // gh repo create prints the URL on stdout
+        String output = result.stdout.toString().trim();
+        // Extract URL (last line usually contains it)
+        String url = output.split('\n').last.trim();
+        if (url.startsWith("https://") || url.startsWith("git@")) {
+          return url;
+        }
+        // Fallback: construct https URL
+        return "https://github.com/$org/$repoName.git";
+      } else {
+        print("gh repo create error: ${result.stderr}");
+        return null;
+      }
+    } catch (e) {
+      print("Exception creating repo: $e");
+      return null;
+    }
+  }
+
+  /// Prompts the user to enter the manager-provided repo URL.
+  Future<String?> _askForRepoUrl() async {
+    print(
+      "\nEnter the repository URL provided by your manager (HTTPS or SSH):",
+    );
+    stdout.write("Repo URL: ");
+    String url = stdin.readLineSync()?.trim() ?? "";
+    if (url.isEmpty) return null;
+    return url;
+  }
+
+  /// Removes the cloned .git folder, re-inits, and pushes with "Initial Commit".
+  Future<void> _initAndPush(Directory projectDir, String repoUrl) async {
+    String path = projectDir.path;
+    print("\nSetting up git repository...");
+
+    // Remove the template's .git history
+    final dotGit = Directory("$path/.git");
+    if (await dotGit.exists()) {
+      await dotGit.delete(recursive: true);
+    }
+
+    // Init fresh repo
+    await _runGit(path, ["init"]);
+    await _runGit(path, ["remote", "add", "origin", repoUrl]);
+
+    // Stage all files
+    await _runGit(path, ["add", "."]);
+
+    // Set user info if not already configured (best-effort)
+    var nameCheck = await Process.run("git", ["config", "user.name"]);
+    if (nameCheck.stdout.toString().trim().isEmpty) {
+      await _runGit(path, ["config", "user.name", "CompanyAppCLI"]);
+      await _runGit(path, ["config", "user.email", "cli@moweb.in"]);
+    }
+
+    // Commit
+    var commitResult = await Process.run("git", [
+      "commit",
+      "-m",
+      "Initial Commit",
+    ], workingDirectory: path);
+    if (commitResult.exitCode != 0) {
+      print("Warning: git commit failed:\n${commitResult.stderr}");
+      return;
+    }
+
+    // Rename branch to main (standard)
+    await _runGit(path, ["branch", "-M", "main"]);
+
+    // Push
+    print("Pushing code to $repoUrl ...");
+    var pushResult = await Process.run("git", [
+      "push",
+      "-u",
+      "origin",
+      "main",
+    ], workingDirectory: path);
+
+    if (pushResult.exitCode == 0) {
+      print("✅  Code pushed successfully to: $repoUrl");
+    } else {
+      print(
+        "⚠️  Push failed. You may need to push manually.\n${pushResult.stderr}",
+      );
+    }
+  }
+
+  /// Helper to run a git command with stdout inherited so the user sees progress.
+  Future<void> _runGit(String workingDir, List<String> args) async {
+    var result = await Process.run("git", args, workingDirectory: workingDir);
+    if (result.exitCode != 0) {
+      print("git ${args.join(' ')} failed: ${result.stderr}");
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Validation
+  // ──────────────────────────────────────────────────────────────────────────
+
+  bool _isValidPackage(String name) {
+    if (name.isEmpty) return false;
+    if (name != name.toLowerCase()) return false;
+    int dots = ".".allMatches(name).length;
+    if (dots < 2) return false;
+    return RegExp(r'^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){2,}$').hasMatch(name);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Firebase Setup
+  // ──────────────────────────────────────────────────────────────────────────
 
   Future<void> setupFirebase(
     String projectName,
@@ -97,14 +410,26 @@ class ProjectGenerator {
         return;
       }
 
-      // 2. Firebase Login (will open browser if not logged in)
+      // 2. Firebase Login Check
       print("Checking Firebase authentication...");
-      await Process.start(
-        "firebase",
-        ["login"],
-        runInShell: true,
-        mode: ProcessStartMode.inheritStdio,
-      );
+      var loginCheck = await Process.run("firebase", ["projects:list"]);
+      if (loginCheck.exitCode != 0) {
+        print("Not logged in to Firebase. Attempting login...");
+        var loginProc = await Process.start(
+          "firebase",
+          ["login"],
+          runInShell: true,
+          mode: ProcessStartMode.inheritStdio,
+        );
+
+        int exitCode = await loginProc.exitCode;
+        if (exitCode != 0) {
+          print(
+            "Firebase login failed. Skipping Firebase setup and continuing with project creation...",
+          );
+          return;
+        }
+      }
 
       // 3. Find or Create Firebase Project
       print("Checking for existing Firebase projects...");
@@ -135,7 +460,6 @@ class ProjectGenerator {
       }
 
       if (firebaseProjectId == null) {
-        // Create new project
         firebaseProjectId =
             "app-${projectName.toLowerCase().replaceAll(RegExp(r'\s+'), '-')}-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}";
         print("Creating Firebase project: $firebaseProjectId...");
@@ -176,8 +500,6 @@ class ProjectGenerator {
           for (var app in apps) {
             String platform = app['platform']?.toString().toUpperCase() ?? "";
             String appId = app['appId']?.toString() ?? "";
-
-            // Firebase JSON can use different keys (packageId, bundleId, or namespace)
             String identifier =
                 (app['namespace'] ?? app['packageId'] ?? app['bundleId'] ?? "")
                     .toString()
@@ -219,7 +541,9 @@ class ProjectGenerator {
                 ? decoded['result']
                 : decoded;
             androidAppId = result['appId'];
-          } catch (e) {}
+          } catch (_) {
+            // ignore: app ID parsing is best-effort
+          }
         }
       }
 
@@ -244,7 +568,9 @@ class ProjectGenerator {
                 ? decoded['result']
                 : decoded;
             iosAppId = result['appId'];
-          } catch (e) {}
+          } catch (_) {
+            // ignore: app ID parsing is best-effort
+          }
         }
       }
 
@@ -261,8 +587,7 @@ class ProjectGenerator {
 
         if (androidConfig.exitCode == 0) {
           String output = androidConfig.stdout.toString().trim();
-          // Regex to extract the first { ... } block
-          Match? match = RegExp(r'({[\s\S]*})').firstMatch(output);
+          Match? match = RegExp(r'({\s*[\s\S]*})').firstMatch(output);
 
           if (match != null) {
             String configContent = match.group(0)!;
@@ -299,8 +624,7 @@ class ProjectGenerator {
 
         if (iosConfig.exitCode == 0) {
           String output = iosConfig.stdout.toString().trim();
-          // Regex to extract the <?xml ... </plist> block
-          Match? match = RegExp(r'(<\?xml[\s\S]*</plist>)').firstMatch(output);
+          Match? match = RegExp(r'(<\?xml[\s\S]*<\/plist>)').firstMatch(output);
 
           if (match != null) {
             String configContent = match.group(0)!;
@@ -328,51 +652,102 @@ class ProjectGenerator {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Flavor Expansion
+  // ──────────────────────────────────────────────────────────────────────────
+  Future<void> _copyDirectory(
+    Directory source,
+    Directory destination,
+    String flavor,
+  ) async {
+    await destination.create(recursive: true);
+    await for (var entity in source.list(recursive: false)) {
+      String name = entity.path.split(Platform.pathSeparator).last;
+      String newPath = p.join(
+        destination.path,
+        name.replaceAll("{{flavor}}", flavor),
+      );
+
+      if (entity is Directory) {
+        await _copyDirectory(entity, Directory(newPath), flavor);
+      } else if (entity is File) {
+        await entity.copy(newPath);
+      }
+    }
+  }
+
   Future<void> applyFlavors(Directory directory, List<String> flavors) async {
     // 1. Handle folder/file duplication for those containing {{flavor}}
     List<FileSystemEntity> entities = directory.listSync(recursive: true);
-    // Sort deepest first to avoid path issues
     entities.sort((a, b) => b.path.length.compareTo(a.path.length));
 
     for (var entity in entities) {
-      String path = entity.path;
-      String name = path.split(Platform.pathSeparator).last;
+      if (entity is Directory) {
+        String path = entity.path;
+        String name = path.split(Platform.pathSeparator).last;
 
-      if (name.contains("{{flavor}}")) {
-        // This is a template for flavor-specific files or directories
-        for (var flavor in flavors) {
-          String newName = name.replaceAll("{{flavor}}", flavor);
-          String newPath = path.replaceRange(
-            path.length - name.length,
-            path.length,
-            newName,
-          );
+        if (name.contains("{{flavor}}")) {
+          for (var flavor in flavors) {
+            String newPath = path.replaceAll("{{flavor}}", flavor);
+            await _copyDirectory(entity, Directory(newPath), flavor);
+          }
+          await entity.delete(recursive: true);
+        }
+      } else if (entity is File) {
+        String path = entity.path;
+        String name = path.split(Platform.pathSeparator).last;
 
-          if (entity is Directory) {
-            await Directory(newPath).create(recursive: true);
-          } else if (entity is File) {
+        // If the file itself contains {{flavor}} but isn't inside a {{flavor}} directory
+        // (because we already handled directories above and deleted them)
+        if (name.contains("{{flavor}}") && await entity.exists()) {
+          for (var flavor in flavors) {
+            String newPath = path.replaceAll("{{flavor}}", flavor);
             await entity.copy(newPath);
           }
+          await entity.delete();
         }
-        // Delete the original template entity
-        await entity.delete(recursive: true);
       }
     }
 
     // 2. Handle block repetition inside files
+    // Supports two marker styles:
+    //   /* @REPEAT_FLAVOR_START */ ... /* @REPEAT_FLAVOR_END */  (for .kts / .json / etc.)
+    //   // @REPEAT_FLAVOR_START   ... // @REPEAT_FLAVOR_END      (for .dart / .yaml / etc.)
     entities = directory.listSync(recursive: true);
     for (var entity in entities) {
       if (entity is File) {
         try {
           String content = await entity.readAsString();
 
-          // Regex to find blocks like /* @REPEAT_FLAVOR_START */ ... /* @REPEAT_FLAVOR_END */
-          final regex = RegExp(
+          // Block-comment style (/* ... */)
+          final blockRegex = RegExp(
             r'/\*\s*@REPEAT_FLAVOR_START\s*\*/([\s\S]*?)/\*\s*@REPEAT_FLAVOR_END\s*\*/',
             multiLine: true,
           );
 
-          String newContent = content.replaceAllMapped(regex, (match) {
+          // Line-comment style (// @REPEAT_FLAVOR_START ... // @REPEAT_FLAVOR_END)
+          final lineRegex = RegExp(
+            r'//\s*@REPEAT_FLAVOR_START([\s\S]*?)//\s*@REPEAT_FLAVOR_END',
+            multiLine: true,
+          );
+
+          String newContent = content.replaceAllMapped(blockRegex, (match) {
+            String template = match.group(1) ?? "";
+            List<String> parts = [];
+            for (int i = 0; i < flavors.length; i++) {
+              String expanded = template.replaceAll("{{flavor}}", flavors[i]);
+              // For JSON arrays: add comma after each item except the last
+              if (i < flavors.length - 1) {
+                // Trim trailing whitespace then append comma before newline
+                expanded = expanded.trimRight();
+                expanded += ",";
+              }
+              parts.add(expanded);
+            }
+            return parts.join('\n');
+          });
+
+          newContent = newContent.replaceAllMapped(lineRegex, (match) {
             String template = match.group(1) ?? "";
             String expanded = "";
             for (var flavor in flavors) {
@@ -388,6 +763,10 @@ class ProjectGenerator {
       }
     }
   }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Value Replacement
+  // ──────────────────────────────────────────────────────────────────────────
 
   Future<void> replaceValues(
     Directory directory,
@@ -415,7 +794,6 @@ class ProjectGenerator {
     }
 
     // 2. Rename files and directories containing placeholders in their names
-    // We re-list and sort by path length (deepest first) to avoid invalidating parent paths
     entities = directory.listSync(recursive: true);
     entities.sort((a, b) => b.path.length.compareTo(a.path.length));
 
@@ -429,7 +807,6 @@ class ProjectGenerator {
 
       values.forEach((key, value) {
         if (newName.contains(key)) {
-          // For android_package in directory names, we typically want dots to become slashes for proper folder depth
           if (key == "{{android_package}}" && entity is Directory) {
             newName = newName.replaceAll(
               key,
@@ -444,10 +821,161 @@ class ProjectGenerator {
 
       if (nameChanged) {
         String newPath = parentDir + newName;
-        // Ensure parent directories exist (important for the android_package dot-to-slash replacement)
         await Directory(Directory(newPath).parent.path).create(recursive: true);
         await entity.rename(newPath);
       }
     }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Enable Firebase code (uncomment)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  Future<void> enableFirebaseCode(Directory projectDir) async {
+    print("\nEnabling Firebase code in the project...");
+
+    final path = projectDir.path;
+
+    // 1. Uncomment dependencies in pubspec.yaml
+    final pubspecFile = File('$path/pubspec.yaml');
+    if (await pubspecFile.exists()) {
+      String content = await pubspecFile.readAsString();
+      content = content.replaceAll('# firebase_core:', 'firebase_core:');
+      content = content.replaceAll('# firebase_auth:', 'firebase_auth:');
+      content = content.replaceAll('# google_sign_in:', 'google_sign_in:');
+      content = content.replaceAll(
+        '# flutter_local_notifications:',
+        'flutter_local_notifications:',
+      );
+      content = content.replaceAll(
+        '# firebase_messaging:',
+        'firebase_messaging:',
+      );
+      content = content.replaceAll(
+        '# firebase_remote_config:',
+        'firebase_remote_config:',
+      );
+      await pubspecFile.writeAsString(content);
+    }
+
+    // 2. Uncomment plugins in gradle files
+    final appGradleFile = File('$path/android/app/build.gradle.kts');
+    if (await appGradleFile.exists()) {
+      String content = await appGradleFile.readAsString();
+      content = content.replaceAll(
+        '// id("com.google.gms.google-services")',
+        'id("com.google.gms.google-services")',
+      );
+      await appGradleFile.writeAsString(content);
+    }
+
+    final settingsGradleFile = File('$path/android/settings.gradle.kts');
+    if (await settingsGradleFile.exists()) {
+      String content = await settingsGradleFile.readAsString();
+      content = content.replaceAll(
+        '//    id("com.google.gms.google-services")',
+        '    id("com.google.gms.google-services")',
+      );
+      await settingsGradleFile.writeAsString(content);
+    }
+
+    // 3. Uncomment Firebase in AppDelegate.swift
+    final appDelegateFile = File('$path/ios/Runner/AppDelegate.swift');
+    if (await appDelegateFile.exists()) {
+      String content = await appDelegateFile.readAsString();
+      content = content.replaceAll(
+        '// import FirebaseCore',
+        'import FirebaseCore',
+      );
+      content = content.replaceAll(
+        '// FirebaseApp.configure()',
+        'FirebaseApp.configure()',
+      );
+      await appDelegateFile.writeAsString(content);
+    }
+
+    // 4. Uncomment imports and initialization in main.dart
+    final mainFile = File('$path/lib/main.dart');
+    if (await mainFile.exists()) {
+      String content = await mainFile.readAsString();
+      content = content.replaceAll(
+        '// import \'package:firebase_core/firebase_core.dart\';',
+        'import \'package:firebase_core/firebase_core.dart\';',
+      );
+      content = content.replaceAll(
+        '// import \'firebase_options.dart\';',
+        'import \'firebase_options.dart\';',
+      );
+      content = content.replaceAll(
+        '// import \'notification_service.dart\';',
+        'import \'notification_service.dart\';',
+      );
+      content = content.replaceAll(
+        '  // await Firebase.initializeApp(',
+        '  await Firebase.initializeApp(',
+      );
+      content = content.replaceAll(
+        '  //   options: DefaultFirebaseOptions.currentPlatform,',
+        '    options: DefaultFirebaseOptions.currentPlatform,',
+      );
+      content = content.replaceAll('  // );', '  );');
+      content = content.replaceAll(
+        '  // final notificationService = NotificationServiceNew();',
+        '  final notificationService = NotificationServiceNew();',
+      );
+      content = content.replaceAll(
+        '  // await notificationService.init();',
+        '  await notificationService.init();',
+      );
+      content = content.replaceAll(
+        '  // await notificationService.getToken();',
+        '  await notificationService.getToken();',
+      );
+      await mainFile.writeAsString(content);
+    }
+
+    // 5. Remove block comments from specific Firebase files
+    final firebaseFiles = [
+      '$path/lib/notification_service.dart',
+      '$path/lib/firebase_options.dart',
+    ];
+
+    for (var filePath in firebaseFiles) {
+      final file = File(filePath);
+      if (await file.exists()) {
+        String content = await file.readAsString();
+        if (content.trim().startsWith('/*') && content.trim().endsWith('*/')) {
+          content = content.trim();
+          content = content.substring(2, content.length - 2).trim();
+          await file.writeAsString(content);
+        }
+      }
+    }
+
+    // 6. Uncomment FCM token methods in AppPreference.dart
+    final appPrefFile = File('$path/lib/utils/app_preference.dart');
+    if (await appPrefFile.exists()) {
+      String content = await appPrefFile.readAsString();
+      content = content.replaceAll(
+        '// final String _fcmToken = "fcm-token";',
+        'final String _fcmToken = "fcm-token";',
+      );
+      content = content.replaceAll(
+        '  /*\n  Future<void> saveFCMToken',
+        '  Future<void> saveFCMToken',
+      );
+      content = content.replaceAll('  return;\n  }\n  */', '  return;\n  }');
+      content = content.replaceAll(
+        '  /*\n  Future<String> getFCMToken',
+        '  Future<String> getFCMToken',
+      );
+      content = content.replaceAll(
+        'return preferences.getString(_fcmToken) ?? "";\n  }\n  */',
+        'return preferences.getString(_fcmToken) ?? "";\n  }',
+      );
+      await appPrefFile.writeAsString(content);
+    }
+
+    print("Firebase code enabled successfully! ✅");
   }
 }
