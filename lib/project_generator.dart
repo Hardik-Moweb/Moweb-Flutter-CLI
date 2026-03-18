@@ -12,12 +12,31 @@ class ProjectGenerator {
 
   Future<void> start() async {
     projectName = "";
-    while (projectName.isEmpty || projectName.contains(" ")) {
-      stdout.write("Project Name (no spaces): ");
-      projectName = stdin.readLineSync()!.trim();
-      if (projectName.contains(" ")) {
-        print("Error: Project name should not contain spaces.");
+    while (true) {
+      stdout.write("Project Name: ");
+      String input = stdin.readLineSync()!.trim();
+
+      if (input.isEmpty) {
+        print("Error: Project name cannot be empty.");
+        continue;
       }
+
+      // No special characters allowed (only alphanumeric and space)
+      if (!RegExp(r'^[a-zA-Z0-9\s]+$').hasMatch(input)) {
+        print(
+          "Error: Project name can only contain letters, numbers, and spaces.",
+        );
+        continue;
+      }
+
+      // No more than one consecutive space allowed
+      if (input.contains("  ")) {
+        print("Error: Multiple consecutive spaces are not allowed.");
+        continue;
+      }
+
+      projectName = input;
+      break;
     }
 
     androidPackage = "";
@@ -44,21 +63,71 @@ class ProjectGenerator {
 
     stdout.write("App Display Name: ");
     String displayName = stdin.readLineSync()!.trim();
+    while (displayName.isEmpty) {
+      print("Error: App Display Name cannot be empty.");
+      stdout.write("App Display Name: ");
+      displayName = stdin.readLineSync()!.trim();
+    }
 
     // Flavor selection
-    stdout.write(
-      "Which flavors you want to setup? (default: prod) [comma separated, e.g: dev, stag, uat]: ",
-    );
-    String flavorInput = stdin.readLineSync()!;
-    List<String> selectedFlavors = flavorInput
-        .split(',')
-        .map((e) => e.trim().toLowerCase())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    List<String> selectedFlavors = ['prod'];
+    while (true) {
+      stdout.write(
+        "\nWhich flavors you want to setup besides 'prod'? (default: none) [comma separated, e.g: dev, stag, uat]: ",
+      );
+      String flavorInput = stdin.readLineSync()!.trim();
 
-    // Always ensure 'prod' is included as a default/fallback
-    if (!selectedFlavors.contains('prod')) {
-      selectedFlavors.insert(0, 'prod');
+      if (flavorInput.isEmpty) {
+        break;
+      }
+
+      // Check for illegal special characters (only letters, numbers, and commas)
+      if (!RegExp(r'^[a-zA-Z0-9,\s]*$').hasMatch(flavorInput)) {
+        print(
+          "Error: Special characters are not allowed (only letters, numbers, and commas).",
+        );
+        continue;
+      }
+
+      List<String> rawFlavors = flavorInput.split(',');
+      List<String> processedFlavors = [];
+      bool hasError = false;
+
+      for (var f in rawFlavors) {
+        String trimmed = f.trim().toLowerCase();
+        if (trimmed.isEmpty) continue;
+
+        if (trimmed == 'prod') {
+          // Skip 'prod' if user adds it manually (as per request: skip it)
+          continue;
+        }
+
+        if (trimmed.length > 10) {
+          print(
+            "Error: Flavor name '$trimmed' is too long (max 10 characters).",
+          );
+          hasError = true;
+          break;
+        }
+
+        if (processedFlavors.contains(trimmed)) {
+          print("Error: Duplicate flavor name '$trimmed' entered.");
+          hasError = true;
+          break;
+        }
+
+        processedFlavors.add(trimmed);
+      }
+
+      if (hasError) continue;
+
+      // Add unique new flavors to the list
+      for (var f in processedFlavors) {
+        if (!selectedFlavors.contains(f)) {
+          selectedFlavors.add(f);
+        }
+      }
+      break;
     }
 
     flavorsList = selectedFlavors;
@@ -85,9 +154,9 @@ class ProjectGenerator {
 
     Directory projectDir = Directory(projectName);
 
-    // Convert Project Name to a safe package name for {{project_name}} (e.g., "LoanCalculator" -> "loan_calculator")
+    // Convert Project Name to a safe package name for {{project_name}} (e.g., "Bottle Model" -> "bottle_model")
     String packageName = projectName.toLowerCase().replaceAll(
-      RegExp(r'[^a-z0-9_]'),
+      RegExp(r'\s+'),
       '_',
     );
 
@@ -105,9 +174,19 @@ class ProjectGenerator {
     }
 
     // Firebase Configuration
-    stdout.write("Do you want to configure Firebase? (y/n): ");
-    String firebaseChoice = stdin.readLineSync()!.toLowerCase();
-    if (firebaseChoice == 'y' || firebaseChoice == 'yes') {
+    String firebaseChoice = "";
+    while (firebaseChoice != 'y' && firebaseChoice != 'n') {
+      stdout.write("Do you want to configure Firebase? (y/n): ");
+      firebaseChoice = stdin.readLineSync()!.trim().toLowerCase();
+      if (firebaseChoice == 'yes') firebaseChoice = 'y';
+      if (firebaseChoice == 'no') firebaseChoice = 'n';
+
+      if (firebaseChoice != 'y' && firebaseChoice != 'n') {
+        print("Error: Please enter 'y' or 'n'.");
+      }
+    }
+
+    if (firebaseChoice == 'y') {
       try {
         await setupFirebase(projectName, androidPackage, iosBundle);
         await enableFirebaseCode(projectDir);
@@ -153,9 +232,19 @@ class ProjectGenerator {
   ///     re-init git to point at that URL, push.
   Future<void> setupGitHub(String projectName, Directory projectDir) async {
     print("\n──────────────────────────────────────────────");
-    stdout.write("Do you want to set up a GitHub repository? (y/n): ");
-    String choice = stdin.readLineSync()!.toLowerCase();
-    if (choice != 'y' && choice != 'yes') {
+    String choice = "";
+    while (choice != 'y' && choice != 'n') {
+      stdout.write("Do you want to set up a GitHub repository? (y/n): ");
+      choice = stdin.readLineSync()!.trim().toLowerCase();
+      if (choice == 'yes') choice = 'y';
+      if (choice == 'no') choice = 'n';
+
+      if (choice != 'y' && choice != 'n') {
+        print("Error: Please enter 'y' or 'n'.");
+      }
+    }
+
+    if (choice == 'n') {
       print("Skipping GitHub setup.");
       return;
     }
@@ -193,9 +282,11 @@ class ProjectGenerator {
     String ghUser = whoami.stdout.toString().trim();
     print("Logged in as: $ghUser");
 
-    // 4. Determine repo name (Flutter-<ProjectName>)
+    // 4. Determine repo name (Flutter-<ProjectName_with_hyphens>)
+    // Replace spaces with hyphens for GitHub (e.g., "Bottle Model" -> "Bottle-Model")
+    String safeProjectRepoName = projectName.replaceAll(RegExp(r'\s+'), '-');
     const String org = CLIConstants.githubOrg;
-    String repoName = "${CLIConstants.githubRepoPrefix}$projectName";
+    String repoName = "${CLIConstants.githubRepoPrefix}$safeProjectRepoName";
     String repoFullName = "$org/$repoName";
 
     print("\nChecking if you have permission to create a repo in $org...");
@@ -206,14 +297,20 @@ class ProjectGenerator {
     String? repoUrl;
 
     if (hasOrgPermission) {
-      // 5a. Ask for creation or link
-      print(
-        "\nYou have permission to create repositories in the $org organisation.",
-      );
-      print("1. Create new repository: $repoFullName");
-      print("2. Add existing repository link");
-      stdout.write("Select an option (1-2): ");
-      String githubOption = stdin.readLineSync()?.trim() ?? "1";
+      String githubOption = "";
+      while (githubOption != "1" && githubOption != "2") {
+        print(
+          "\nYou have permission to create repositories in the $org organisation.",
+        );
+        print("1. Create new repository: $repoFullName");
+        print("2. Add existing repository link");
+        stdout.write("Select an option (1-2): ");
+        githubOption = stdin.readLineSync()?.trim() ?? "";
+
+        if (githubOption != "1" && githubOption != "2") {
+          print("Error: Please enter 1 or 2.");
+        }
+      }
 
       if (githubOption == "1") {
         print("Creating repository: $repoFullName ...");
@@ -315,6 +412,14 @@ class ProjectGenerator {
         // Fallback: construct https URL
         return "https://github.com/$org/$repoName.git";
       } else {
+        String stderr = result.stderr.toString().toLowerCase();
+        if (stderr.contains("already exists")) {
+          print(
+            "\n⚠️  The repository '$org/$repoName' already exists on GitHub.",
+          );
+          return await _askForRepoUrl();
+        }
+
         print("gh repo create error: ${result.stderr}");
         return null;
       }
@@ -347,11 +452,21 @@ class ProjectGenerator {
           "${checkAccess.stderr}",
         );
 
-        stdout.write(
-          "\nDo you want to continue with a new GitHub Repo Link? (y/n): ",
-        );
-        String retry = stdin.readLineSync()?.trim().toLowerCase() ?? "n";
-        if (retry != 'y' && retry != 'yes') {
+        String retry = "";
+        while (retry != 'y' && retry != 'n') {
+          stdout.write(
+            "\nDo you want to continue with a new GitHub Repo Link? (y/n): ",
+          );
+          retry = stdin.readLineSync()?.trim().toLowerCase() ?? "n";
+          if (retry == 'yes') retry = 'y';
+          if (retry == 'no') retry = 'n';
+
+          if (retry != 'y' && retry != 'n') {
+            print("Error: Please enter 'y' or 'n'.");
+          }
+        }
+
+        if (retry == 'n') {
           print("Skipping GitHub setup as per user preference.");
           return null;
         }
@@ -804,6 +919,12 @@ class ProjectGenerator {
             multiLine: true,
           );
 
+          // Markdown style (<!-- @REPEAT_FLAVOR_START --> ... <!-- @REPEAT_FLAVOR_END -->)
+          final mdRegex = RegExp(
+            r'<!--\s*@REPEAT_FLAVOR_START\s*-->([\s\S]*?)<!--\s*@REPEAT_FLAVOR_END\s*-->',
+            multiLine: true,
+          );
+
           String newContent = content.replaceAllMapped(blockRegex, (match) {
             String template = match.group(1) ?? "";
             List<String> parts = [];
@@ -821,6 +942,15 @@ class ProjectGenerator {
           });
 
           newContent = newContent.replaceAllMapped(lineRegex, (match) {
+            String template = match.group(1) ?? "";
+            String expanded = "";
+            for (var flavor in flavors) {
+              expanded += template.replaceAll("{{flavor}}", flavor);
+            }
+            return expanded;
+          });
+
+          newContent = newContent.replaceAllMapped(mdRegex, (match) {
             String template = match.group(1) ?? "";
             String expanded = "";
             for (var flavor in flavors) {
