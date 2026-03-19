@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'utils/constants.dart';
 
 class ProjectGenerator {
-  static const String currentVersion = "1.0.0";
+  static const String currentVersion = "3.0.0";
   static const String repoRawUrl =
       "https://raw.githubusercontent.com/Hardik-Moweb/Moweb-Flutter-CLI/main/moweb_flutter_cli/pubspec.yaml";
 
@@ -255,75 +255,74 @@ class ProjectGenerator {
       print("Warning: Error during value replacement: $e. Continuing...");
     }
 
-    // Firebase Configuration
-    String firebaseChoice = "";
-    while (firebaseChoice != 'y' && firebaseChoice != 'n') {
-      stdout.write("Do you want to configure Firebase? (y/n): ");
-      firebaseChoice = stdin.readLineSync()!.trim().toLowerCase();
-      if (firebaseChoice == 'yes') firebaseChoice = 'y';
-      if (firebaseChoice == 'no') firebaseChoice = 'n';
+    // ──────────────────────────────────────────────────────────────────────────
+    // Firebase Setup Phase
+    // ──────────────────────────────────────────────────────────────────────────
+    int? firebaseOption;
+    while (firebaseOption == null) {
+      print("\n──────────────────────────────────────────────");
+      print("      Firebase Configuration Options");
+      print("──────────────────────────────────────────────");
 
-      if (firebaseChoice != 'y' && firebaseChoice != 'n') {
-        print("Error: Please enter 'y' or 'n'.");
+      if (setupFirebaseChoice) {
+        print("1. AutoCreate Firebase Project + Firebase Configuration");
+        print("2. Manual Create Firebase Project + Firebase Configuration");
+        print(
+          "3. Manual Create Firebase Project + Manual Firebase Configuration (Skip)",
+        );
+        stdout.write("\nSelect an option (1-3): ");
+        String input = stdin.readLineSync()?.trim() ?? "";
+        if (['1', '2', '3'].contains(input)) {
+          firebaseOption = int.parse(input);
+        } else {
+          print("Error: Please enter 1, 2, or 3.");
+        }
+      } else {
+        print("1. Manual Create Firebase Project + Firebase Configuration");
+        print(
+          "2. Manual Create Firebase Project + Manual Firebase Configuration (Skip)",
+        );
+        stdout.write("\nSelect an option (1-2): ");
+        String input = stdin.readLineSync()?.trim() ?? "";
+        if (['1', '2'].contains(input)) {
+          int choice = int.parse(input);
+          firebaseOption = (choice == 1) ? 2 : 3;
+        } else {
+          print("Error: Please enter 1 or 2.");
+        }
       }
     }
 
-    if (firebaseChoice == 'y') {
+    if (firebaseOption == 1) {
       bool firebaseDone = false;
       while (!firebaseDone) {
-        String firebaseMode = "";
-        while (firebaseMode != '1' && firebaseMode != '2') {
-          print("\nFirebase Configuration Options:");
-          print(
-            "1. Create project and apps via Firebase CLI (requires login)?",
-          );
-          print(
-            "2. Manual: I already have a project / will add credentials later manually?",
-          );
-          stdout.write("Select an option (1-2): ");
-          firebaseMode = stdin.readLineSync()?.trim() ?? "";
-
-          if (firebaseMode != '1' && firebaseMode != '2') {
-            print("Error: Please enter 1 or 2.");
-          }
-        }
-
-        if (firebaseMode == '1') {
-          try {
-            await setupFirebase(projectName, androidPackage, iosBundle);
-            firebaseDone = true;
-          } catch (e) {
-            if (e.toString().contains("TIMEOUT")) {
-              print(
-                "\n[!] Firebase login timed out (30s). Please try again or choose another option.",
-              );
-              continue;
-            }
+        try {
+          await setupFirebase(projectName, androidPackage, iosBundle);
+          firebaseDone = true;
+        } catch (e) {
+          if (e.toString().contains("TIMEOUT")) {
             print(
-              "\nFirebase setup failed ($e). Continuing with project generation placeholders...",
+              "\n[!] Firebase login timed out (180s). Please try again or choose another option.",
             );
-            firebaseDone = true;
+            continue;
           }
-        } else {
           print(
-            "\nSkipping automatic Firebase project creation. Manual setup selected.",
-          );
-          print(
-            "  • You must manually place 'google-services.json' in: android/app/src/<flavor>/",
-          );
-          print(
-            "  • You must manually place 'GoogleService-Info_<flavor>.plist' in: ios/Runner/",
+            "\nFirebase setup failed ($e). Continuing with manual configuration option...",
           );
           firebaseDone = true;
+          firebaseOption = 2; // Fallback to manual config
         }
       }
+    }
 
-      // Both modes enable the base Firebase code/dependencies/main.dart init
+    if (firebaseOption == 2) {
       try {
         await enableFirebaseCode(projectDir);
       } catch (e) {
         print("\nError enabling Firebase code structures: $e");
       }
+    } else if (firebaseOption == 3) {
+      print("\nSkipping Firebase automation.");
     }
 
     print("\nRunning flutter pub get...\n");
@@ -342,7 +341,11 @@ class ProjectGenerator {
     }
 
     // ── GitHub Repository Setup ──────────────────────────────────────────────
-    await setupGitHub(projectName, projectDir);
+    if (setupGitHubChoice) {
+      await setupGitHub(projectName, projectDir);
+    } else {
+      print("\nSkipping GitHub setup as per initial choice.");
+    }
 
     print("\nProject created successfully 🚀 at: ${projectDir.absolute.path}");
   }
@@ -425,22 +428,8 @@ class ProjectGenerator {
   ///     re-init git to point at that URL, push.
   Future<void> setupGitHub(String projectName, Directory projectDir) async {
     print("\n──────────────────────────────────────────────");
-    String choice = "";
-    while (choice != 'y' && choice != 'n') {
-      stdout.write("Do you want to set up a GitHub repository? (y/n): ");
-      choice = stdin.readLineSync()!.trim().toLowerCase();
-      if (choice == 'yes') choice = 'y';
-      if (choice == 'no') choice = 'n';
-
-      if (choice != 'y' && choice != 'n') {
-        print("Error: Please enter 'y' or 'n'.");
-      }
-    }
-
-    if (choice == 'n') {
-      print("Skipping GitHub setup.");
-      return;
-    }
+    print("      Setting up GitHub Repository");
+    print("──────────────────────────────────────────────\n");
 
     // 1. Check gh CLI
     print("\nChecking GitHub CLI (gh)...");
