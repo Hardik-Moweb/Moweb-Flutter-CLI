@@ -35,6 +35,7 @@ class ProjectGenerator {
 
   Future<void> _startInternal() async {
     await checkForUpdates();
+    await _checkPrerequisites();
     // Reset state for fresh start
     projectName = "";
     androidPackage = "";
@@ -406,10 +407,14 @@ class ProjectGenerator {
 
     // 1. Check gh CLI
     print("\nChecking GitHub CLI (gh)...");
-    var ghCheck = await Process.run("gh", ["--version"]);
-    if (ghCheck.exitCode != 0) {
+    try {
+      var ghCheck = await Process.run("gh", ["--version"]);
+      if (ghCheck.exitCode != 0) {
+        throw Exception("gh command returned non-zero exit code.");
+      }
+    } catch (_) {
       print(
-        "Error: GitHub CLI (gh) is not installed. Please install it from https://cli.github.com and try again.",
+        "Error: GitHub CLI (gh) is not installed or not in your PATH. Please install it from https://cli.github.com and try again.",
       );
       return;
     }
@@ -748,9 +753,16 @@ class ProjectGenerator {
 
     try {
       // 1. Check if firebase CLI is installed
-      var checkFirebase = await Process.run("firebase", ["--version"]);
-      if (checkFirebase.exitCode != 0) {
-        print("Error: Firebase CLI is not installed. Please install it first.");
+      print("Checking Firebase CLI...");
+      try {
+        var checkFirebase = await Process.run("firebase", ["--version"]);
+        if (checkFirebase.exitCode != 0) {
+          throw Exception("firebase command returned non-zero exit code.");
+        }
+      } catch (_) {
+        print(
+          "Error: Firebase CLI is not installed or not in your PATH. Please install it from https://firebase.google.com/docs/cli and try again.",
+        );
         return;
       }
 
@@ -1459,7 +1471,6 @@ class ProjectGenerator {
           '$iosBundle.$flavor',
         );
       }
-
     }
 
     // 8. Uncomment version_update in landing_page.dart
@@ -1467,8 +1478,12 @@ class ProjectGenerator {
     if (await landingPageFile.exists()) {
       String content = await landingPageFile.readAsString();
       // Use the actual package name for replacement
-      final packageName = path.split(Platform.pathSeparator).last.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
-      
+      final packageName = path
+          .split(Platform.pathSeparator)
+          .last
+          .toLowerCase()
+          .replaceAll(RegExp(r'\s+'), '_');
+
       content = content.replaceAll(
         '// import \'package:$packageName/components/version_update.dart\';',
         'import \'package:$packageName/components/version_update.dart\';',
@@ -1500,5 +1515,112 @@ class ProjectGenerator {
     }
 
     print("Project setup completed successfully! ✅");
+  }
+
+  /// Check for necessary CLIs and show installation instructions if missing.
+  Future<void> _checkPrerequisites() async {
+    // 0. Ensure pub-cache/bin is in PATH (common Dart warning)
+    await _setupPubPath();
+
+    print("\n──────────────────────────────────────────────");
+    print("Checking System Prerequisites...");
+
+    bool missingGh = false;
+    bool missingFirebase = false;
+
+    // 1. Check gh CLI
+    try {
+      var res = await Process.run("gh", ["--version"]);
+      if (res.exitCode != 0) throw Exception();
+      print("✅  GitHub CLI (gh) localized.");
+    } catch (_) {
+      print("[!] GitHub CLI (gh) is missing.");
+      missingGh = true;
+    }
+
+    // 2. Check Firebase CLI
+    try {
+      var res = await Process.run("firebase", ["--version"]);
+      if (res.exitCode != 0) throw Exception();
+      print("✅  Firebase CLI localized.");
+    } catch (_) {
+      print("[!] Firebase CLI is missing.");
+      missingFirebase = true;
+    }
+
+    if (missingGh || missingFirebase) {
+      print(
+        "\nSome tools are missing. Do you want to try installing them now? (y/n): ",
+      );
+      String choice = stdin.readLineSync()?.trim().toLowerCase() ?? "";
+      if (choice == 'y' || choice == 'yes') {
+        if (missingGh) {
+          print("\nInstalling GitHub CLI (gh) via Homebrew...");
+          var res = await Process.start(
+            "brew",
+            ["install", "gh"],
+            mode: ProcessStartMode.inheritStdio,
+            runInShell: true,
+          );
+          await res.exitCode;
+        }
+        if (missingFirebase) {
+          print("\nInstalling Firebase CLI via npm...");
+          var res = await Process.start(
+            "npm",
+            ["install", "-g", "firebase-tools"],
+            mode: ProcessStartMode.inheritStdio,
+            runInShell: true,
+          );
+          await res.exitCode;
+        }
+        print(
+          "\nInstallation attempts finished. Please restart the CLI if tools are still not found.",
+        );
+      } else {
+        print(
+          "\n⚠️  Note: Some features like repo setup or Firebase automation may fail without these tools.",
+        );
+      }
+    }
+    print("──────────────────────────────────────────────\n");
+  }
+
+  /// Checks if pub-cache/bin is in PATH and offers to add it to shell config if missing.
+  Future<void> _setupPubPath() async {
+    final home = Platform.environment['HOME'];
+    if (home == null) return;
+
+    final pubBinPath = "$home/.pub-cache/bin";
+    final currentPath = Platform.environment['PATH'] ?? "";
+
+    if (!currentPath.contains(pubBinPath) &&
+        !currentPath.contains(".pub-cache/bin")) {
+      print(
+        "\n[!] Warning: The Dart pub cache bin is not in your system PATH.",
+      );
+      print(
+        "    This can cause issues running global CLI tools. Would you like me to add it to your shell config (.zshrc)? (y/n): ",
+      );
+      String choice = stdin.readLineSync()?.trim().toLowerCase() ?? "";
+      if (choice == 'y' || choice == 'yes') {
+        try {
+          File config = File("$home/.zshrc");
+          // Fallback if .zshrc doesn't exist (older Macs/bash)
+          if (!await config.exists()) {
+            config = File("$home/.bash_profile");
+          }
+
+          String exportLine =
+              '\n# Added by Moweb Flutter CLI\nexport PATH="\$PATH":"$pubBinPath"\n';
+          await config.writeAsString(exportLine, mode: FileMode.append);
+          print(
+            "✅  Successfully updated ${config.path}. Please restart your terminal or run 'source ${config.path}' for changes to take effect.",
+          );
+        } catch (e) {
+          print("Error updating shell config: $e");
+        }
+      }
+    }
   }
 }
