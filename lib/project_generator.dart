@@ -1624,20 +1624,17 @@ class ProjectGenerator {
       var res = await Process.run("gh", ["--version"]);
       if (res.exitCode != 0) throw Exception();
     } catch (_) {
-      print("[!] GitHub CLI (gh) is missing.");
-      if (await _askYesNo("Do you want to install GitHub CLI now?")) {
-        print("\nInstalling GitHub CLI via Homebrew...");
-        var res = await Process.start(
-          "brew",
-          ["install", "gh"],
-          mode: ProcessStartMode.inheritStdio,
-          runInShell: true,
-        );
-        int exit = await res.exitCode;
-        if (exit != 0) throw Exception("GitHub CLI installation failed.");
-      } else {
-        throw Exception("PREREQUISITE_FAILED: GitHub CLI required.");
-      }
+      print(
+        "[!] GitHub CLI (gh) is missing. Installing GitHub CLI via Homebrew...",
+      );
+      var res = await Process.start(
+        "brew",
+        ["install", "gh"],
+        mode: ProcessStartMode.inheritStdio,
+        runInShell: true,
+      );
+      int exit = await res.exitCode;
+      if (exit != 0) throw Exception("GitHub CLI installation failed.");
     }
   }
 
@@ -1679,20 +1676,15 @@ class ProjectGenerator {
       var res = await Process.run("firebase", ["--version"]);
       if (res.exitCode != 0) throw Exception();
     } catch (_) {
-      print("[!] Firebase CLI is missing.");
-      if (await _askYesNo("Do you want to install Firebase CLI now?")) {
-        print("\nInstalling Firebase CLI via npm...");
-        var res = await Process.start(
-          "npm",
-          ["install", "-g", "firebase-tools"],
-          mode: ProcessStartMode.inheritStdio,
-          runInShell: true,
-        );
-        int exit = await res.exitCode;
-        if (exit != 0) throw Exception("Firebase CLI installation failed.");
-      } else {
-        throw Exception("PREREQUISITE_FAILED: Firebase CLI required.");
-      }
+      print("[!] Firebase CLI is missing. Installing Firebase CLI via npm...");
+      var res = await Process.start(
+        "npm",
+        ["install", "-g", "firebase-tools"],
+        mode: ProcessStartMode.inheritStdio,
+        runInShell: true,
+      );
+      int exit = await res.exitCode;
+      if (exit != 0) throw Exception("Firebase CLI installation failed.");
     }
   }
 
