@@ -37,19 +37,20 @@ class _LandingPageState extends State<LandingPage> {
       if (!mounted) return;
       // Only navigate if no forced update is required
       // if (updateRequired != true) {
-      if (true) {
-        if (userLogin == true) {
-          globalState.userData = UserDataModel.fromJson(
-            json.decode(prefs.getString(Pref.userData) ?? ""),
-          );
-          globalState.updateIsSuperAdminFromUserData();
+        if (true) {
+          if (userLogin == true) {
+            globalState.userData = UserDataModel.fromJson(
+              json.decode(prefs.getString(Pref.userData) ?? ""),
+            );
+            globalState.updateIsSuperAdminFromUserData();
 
-          // After login, navigate to a dashboard (using LoginPage as placeholder since others are removed)
-          // You should replace this with your actual home page later
-          callNextScreenAndClearStack(context, const LoginPage());
-        } else {
-          callNextScreenAndClearStack(context, const LoginPage());
-        }
+            // After login, navigate to a dashboard (using LoginPage as placeholder since others are removed)
+            // You should replace this with your actual home page later
+            callNextScreenAndClearStack(context, const LoginPage());
+          } else {
+            callNextScreenAndClearStack(context, const LoginPage());
+          }
+        // }
       }
     });
   }

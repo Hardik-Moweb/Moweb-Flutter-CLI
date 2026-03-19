@@ -1096,10 +1096,10 @@ class ProjectGenerator {
     await destination.create(recursive: true);
     await for (var entity in source.list(recursive: false)) {
       String name = entity.path.split(Platform.pathSeparator).last;
-      String newPath = p.join(
-        destination.path,
-        name.replaceAll("{{flavor}}", flavor),
-      );
+      String newName = flavor.isEmpty
+          ? name
+          : name.replaceAll("{{flavor}}", flavor);
+      String newPath = p.join(destination.path, newName);
 
       if (entity is Directory) {
         await _copyDirectory(entity, Directory(newPath), flavor);
