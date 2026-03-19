@@ -16,6 +16,8 @@ class ProjectGenerator {
   String projectName = "";
   String androidPackage = "";
   String iosBundle = "";
+  bool setupGitHubChoice = false;
+  bool setupFirebaseChoice = false;
 
   Future<void> start() async {
     try {
@@ -35,15 +37,44 @@ class ProjectGenerator {
 
   Future<void> _startInternal() async {
     await checkForUpdates();
-    await _checkPrerequisites();
-    // Reset state for fresh start
-    projectName = "";
-    androidPackage = "";
-    iosBundle = "";
-    flavorsList = [];
-    firebaseValues = {};
+    await _setupPubPath();
 
     while (true) {
+      _resetState();
+      print("\n──────────────────────────────────────────────");
+      print("      Moweb Flutter CLI Configuration");
+      print("──────────────────────────────────────────────\n");
+
+      // 1. Initial Logic Choices
+      try {
+        setupGitHubChoice = await _askYesNo(
+          "Do you want to set up a GitHub Account?",
+        );
+        if (setupGitHubChoice) {
+          await _ensureGhCLI();
+          await _ensureGhAuth();
+        }
+
+        setupFirebaseChoice = await _askYesNo(
+          "Do you want to setup Firebase for autocreate your project?",
+        );
+        if (setupFirebaseChoice) {
+          await _ensureFirebaseCLI();
+          await _ensureFirebaseAuth();
+        }
+      } catch (e) {
+        if (e.toString().contains("TIMEOUT") ||
+            e.toString().contains("PREREQUISITE_FAILED")) {
+          print("\n[!] Setup failed: $e");
+          print("Restarting configuration from the beginning...\n");
+          continue;
+        }
+        rethrow;
+      }
+
+      print("\n──────────────────────────────────────────────");
+      print("      Enter Project Details");
+      print("──────────────────────────────────────────────\n");
       stdout.write("Project Name: ");
       String input = stdin.readLineSync()!.trim();
 
@@ -1232,8 +1263,7 @@ class ProjectGenerator {
 
       if (nameChanged) {
         String newPath = parentDir + newName;
-        await Directory(Directory(newPath).parent.path).create(recursive: true);
-        await entity.rename(newPath);
+        await _moveEntity(entity, newPath);
       }
     }
   }
@@ -1517,75 +1547,6 @@ class ProjectGenerator {
     print("Project setup completed successfully! ✅");
   }
 
-  /// Check for necessary CLIs and show installation instructions if missing.
-  Future<void> _checkPrerequisites() async {
-    // 0. Ensure pub-cache/bin is in PATH (common Dart warning)
-    await _setupPubPath();
-
-    print("\n──────────────────────────────────────────────");
-    print("Checking System Prerequisites...");
-
-    bool missingGh = false;
-    bool missingFirebase = false;
-
-    // 1. Check gh CLI
-    try {
-      var res = await Process.run("gh", ["--version"]);
-      if (res.exitCode != 0) throw Exception();
-      print("✅  GitHub CLI (gh) localized.");
-    } catch (_) {
-      print("[!] GitHub CLI (gh) is missing.");
-      missingGh = true;
-    }
-
-    // 2. Check Firebase CLI
-    try {
-      var res = await Process.run("firebase", ["--version"]);
-      if (res.exitCode != 0) throw Exception();
-      print("✅  Firebase CLI localized.");
-    } catch (_) {
-      print("[!] Firebase CLI is missing.");
-      missingFirebase = true;
-    }
-
-    if (missingGh || missingFirebase) {
-      print(
-        "\nSome tools are missing. Do you want to try installing them now? (y/n): ",
-      );
-      String choice = stdin.readLineSync()?.trim().toLowerCase() ?? "";
-      if (choice == 'y' || choice == 'yes') {
-        if (missingGh) {
-          print("\nInstalling GitHub CLI (gh) via Homebrew...");
-          var res = await Process.start(
-            "brew",
-            ["install", "gh"],
-            mode: ProcessStartMode.inheritStdio,
-            runInShell: true,
-          );
-          await res.exitCode;
-        }
-        if (missingFirebase) {
-          print("\nInstalling Firebase CLI via npm...");
-          var res = await Process.start(
-            "npm",
-            ["install", "-g", "firebase-tools"],
-            mode: ProcessStartMode.inheritStdio,
-            runInShell: true,
-          );
-          await res.exitCode;
-        }
-        print(
-          "\nInstallation attempts finished. Please restart the CLI if tools are still not found.",
-        );
-      } else {
-        print(
-          "\n⚠️  Note: Some features like repo setup or Firebase automation may fail without these tools.",
-        );
-      }
-    }
-    print("──────────────────────────────────────────────\n");
-  }
-
   /// Checks if pub-cache/bin is in PATH and offers to add it to shell config if missing.
   Future<void> _setupPubPath() async {
     final home = Platform.environment['HOME'];
@@ -1620,6 +1581,174 @@ class ProjectGenerator {
         } catch (e) {
           print("Error updating shell config: $e");
         }
+      }
+    }
+  }
+
+  void _resetState() {
+    projectName = "";
+    androidPackage = "";
+    iosBundle = "";
+    flavorsList = [];
+    firebaseValues = {};
+    setupGitHubChoice = false;
+    setupFirebaseChoice = false;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Interactive Helpers
+  // ──────────────────────────────────────────────────────────────────────────
+
+  Future<bool> _askYesNo(String question) async {
+    String choice = "";
+    while (choice != 'y' && choice != 'n') {
+      stdout.write("$question (y/n): ");
+      choice = stdin.readLineSync()?.trim().toLowerCase() ?? "";
+      if (choice == 'yes') choice = 'y';
+      if (choice == 'no') choice = 'n';
+      if (choice != 'y' && choice != 'n') {
+        print("Error: Please enter 'y' or 'n'.");
+      }
+    }
+    return choice == 'y';
+  }
+
+  Future<void> _ensureGhCLI() async {
+    try {
+      var res = await Process.run("gh", ["--version"]);
+      if (res.exitCode != 0) throw Exception();
+    } catch (_) {
+      print("[!] GitHub CLI (gh) is missing.");
+      if (await _askYesNo("Do you want to install GitHub CLI now?")) {
+        print("\nInstalling GitHub CLI via Homebrew...");
+        var res = await Process.start(
+          "brew",
+          ["install", "gh"],
+          mode: ProcessStartMode.inheritStdio,
+          runInShell: true,
+        );
+        int exit = await res.exitCode;
+        if (exit != 0) throw Exception("GitHub CLI installation failed.");
+      } else {
+        throw Exception("PREREQUISITE_FAILED: GitHub CLI required.");
+      }
+    }
+  }
+
+  Future<void> _ensureGhAuth() async {
+    print("Checking GitHub authentication...");
+    var authStatus = await Process.run("gh", ["auth", "status"]);
+    if (authStatus.exitCode != 0) {
+      print("Not logged in to GitHub. Attempting login...");
+      print(
+        "Note: If the browser doesn't open, follow the terminal instructions.",
+      );
+      var loginProc = await Process.start(
+        "gh",
+        ["auth", "login"],
+        runInShell: true,
+        mode: ProcessStartMode.inheritStdio,
+      );
+
+      final timer = Timer(Duration(seconds: 30), () {
+        loginProc.kill();
+      });
+
+      int loginExit = await loginProc.exitCode;
+      bool wasTimedOut = !timer.isActive;
+      timer.cancel();
+
+      if (wasTimedOut) throw Exception("GITHUB_TIMEOUT");
+      if (loginExit != 0) {
+        throw Exception("PREREQUISITE_FAILED: GitHub login failed.");
+      }
+      print("✅ Logged in to GitHub.");
+    } else {
+      print("✅ Logged in to GitHub.");
+    }
+  }
+
+  Future<void> _ensureFirebaseCLI() async {
+    try {
+      var res = await Process.run("firebase", ["--version"]);
+      if (res.exitCode != 0) throw Exception();
+    } catch (_) {
+      print("[!] Firebase CLI is missing.");
+      if (await _askYesNo("Do you want to install Firebase CLI now?")) {
+        print("\nInstalling Firebase CLI via npm...");
+        var res = await Process.start(
+          "npm",
+          ["install", "-g", "firebase-tools"],
+          mode: ProcessStartMode.inheritStdio,
+          runInShell: true,
+        );
+        int exit = await res.exitCode;
+        if (exit != 0) throw Exception("Firebase CLI installation failed.");
+      } else {
+        throw Exception("PREREQUISITE_FAILED: Firebase CLI required.");
+      }
+    }
+  }
+
+  Future<void> _ensureFirebaseAuth() async {
+    print("Checking Firebase authentication...");
+    var loginCheck = await Process.run("firebase", ["projects:list"]);
+    if (loginCheck.exitCode != 0) {
+      print("Not logged in to Firebase. Attempting login...");
+      var loginProc = await Process.start(
+        "firebase",
+        ["login"],
+        runInShell: true,
+        mode: ProcessStartMode.inheritStdio,
+      );
+
+      final timer = Timer(Duration(seconds: 30), () {
+        loginProc.kill();
+      });
+
+      int exitCode = await loginProc.exitCode;
+      bool wasTimedOut = !timer.isActive;
+      timer.cancel();
+
+      if (wasTimedOut) throw Exception("FIREBASE_TIMEOUT");
+      if (exitCode != 0) {
+        throw Exception("PREREQUISITE_FAILED: Firebase login failed.");
+      }
+      print("✅ Logged in to Firebase.");
+    } else {
+      print("✅ Logged in to Firebase.");
+    }
+  }
+
+  /// Recursively moves a file or directory to a new path, merging contents if necessary.
+  /// This prevents "OS Error: Directory not empty, errno = 66" during renames.
+  Future<void> _moveEntity(FileSystemEntity entity, String newPath) async {
+    if (entity is File) {
+      final destFile = File(newPath);
+      if (await destFile.exists()) {
+        await destFile.delete();
+      }
+      await destFile.parent.create(recursive: true);
+      await entity.rename(newPath);
+    } else if (entity is Directory) {
+      final destDir = Directory(newPath);
+      if (await destDir.exists()) {
+        // Merge contents recursively
+        await for (var item in entity.list(recursive: false)) {
+          final itemName = item.path.split(Platform.pathSeparator).last;
+          final itemNewPath = p.join(newPath, itemName);
+          await _moveEntity(item, itemNewPath);
+        }
+        // Cleanup the now-empty source directory
+        if (await entity.exists()) {
+          try {
+            await entity.delete();
+          } catch (_) {}
+        }
+      } else {
+        // Normal rename should work if destination doesn't exist
+        await destDir.parent.create(recursive: true);
+        await entity.rename(newPath);
       }
     }
   }
