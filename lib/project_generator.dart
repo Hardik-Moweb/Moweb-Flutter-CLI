@@ -25,9 +25,15 @@ class ProjectGenerator {
     } catch (e) {
       if (e.toString().contains("GITHUB_TIMEOUT")) {
         print(
-          "\n\n[!] GitHub authentication timed out (30s). Restarting complete process from scratch...\n",
+          "\n\n[!] GitHub authentication timed out (180). Restarting complete process from scratch...\n",
         );
-        projectName = ""; // Reset for fresh start
+        _resetState();
+        await start();
+      } else if (e.toString().contains("FIREBASE_TIMEOUT")) {
+        print(
+          "\n\n[!] Firebase login timed out (180). Restarting complete process from scratch...\n",
+        );
+        _resetState();
         await start();
       } else {
         rethrow;
@@ -463,7 +469,7 @@ class ProjectGenerator {
       );
 
       // 30 second timeout for GitHub login
-      final timer = Timer(Duration(seconds: 30), () {
+      final timer = Timer(Duration(seconds: 180), () {
         loginProc.kill();
       });
 
@@ -810,7 +816,7 @@ class ProjectGenerator {
         );
 
         // 30 second timeout for login
-        final timer = Timer(Duration(seconds: 30), () {
+        final timer = Timer(Duration(seconds: 180), () {
           loginProc.kill();
         });
 
@@ -1650,7 +1656,7 @@ class ProjectGenerator {
         mode: ProcessStartMode.inheritStdio,
       );
 
-      final timer = Timer(Duration(seconds: 30), () {
+      final timer = Timer(Duration(seconds: 180), () {
         loginProc.kill();
       });
 
@@ -1702,7 +1708,7 @@ class ProjectGenerator {
         mode: ProcessStartMode.inheritStdio,
       );
 
-      final timer = Timer(Duration(seconds: 30), () {
+      final timer = Timer(Duration(seconds: 180), () {
         loginProc.kill();
       });
 
